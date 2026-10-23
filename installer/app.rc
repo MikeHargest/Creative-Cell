@@ -6,8 +6,8 @@
 GLFW_ICON ICON "app.ico"
 
 VS_VERSION_INFO VERSIONINFO
-FILEVERSION 0,2,0,0
-PRODUCTVERSION 0,2,0,0
+FILEVERSION 0,2,1,0
+PRODUCTVERSION 0,2,1,0
 FILEFLAGSMASK 0x3fL
 FILEFLAGS 0x0L
 FILEOS VOS_NT_WINDOWS32
@@ -21,11 +21,11 @@ BEGIN
       VALUE "CompanyName", "Mike Hargest"
       VALUE "LegalCopyright", "Copyright (c) 2026 Mike Hargest. All rights reserved."
       VALUE "FileDescription", "Creative Cell"
-      VALUE "FileVersion", "0.2.0"
+      VALUE "FileVersion", "0.2.1"
       VALUE "InternalName", "CreativeCell"
       VALUE "OriginalFilename", "CreativeCell.exe"
       VALUE "ProductName", "Creative Cell"
-      VALUE "ProductVersion", "0.2.0"
+      VALUE "ProductVersion", "0.2.1"
     END
   END
   BLOCK "VarFileInfo"

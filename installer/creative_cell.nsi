@@ -13,7 +13,7 @@ Unicode true
 !define APP_EXE       "CreativeCell.exe"
 !define THUMB_DLL     "cc_thumbs.dll"
 !ifndef APP_VERSION
-  !define APP_VERSION "0.2.0"
+  !define APP_VERSION "0.2.1"
 !endif
 !define APP_PUBLISHER "Mike Hargest"
 !define APP_KEY       "Software\CreativeCell"

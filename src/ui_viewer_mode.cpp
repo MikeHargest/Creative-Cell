@@ -91,11 +91,14 @@ void App::drawTabBar(ImVec2 pos, ImVec2 size) {
     const ImVec2 p0(x, pos.y + px(5)), p1(x + width, pos.y + h);
     ImGui::PushID(index);
     ImGui::SetCursorScreenPos(p0);
+    ImGui::SetNextItemAllowOverlap();  // (the close button on top of it takes its clicks)
     ImGui::InvisibleButton("##tab", ImVec2(width, p1.y - p0.y));
-    const bool hov = ImGui::IsItemHovered();
+    const bool tabHov = ImGui::IsItemHovered();  // (not over the close button)
+    // Over the tab or its close button: the button's hover is the tab's too.
+    const bool hov = ImGui::IsMouseHoveringRect(p0, p1) && ImGui::IsWindowHovered(ImGuiHoveredFlags_AllowWhenBlockedByActiveItem);
     if (ImGui::IsItemClicked(ImGuiMouseButton_Left)) activate = index;
     if (index >= 0 && hov && ImGui::IsMouseReleased(ImGuiMouseButton_Middle)) closeIndex = index;
-    if (hov && tip) tooltip(tip);
+    if (tabHov && tip) tooltip(tip);
     if (active || hov) {
       dl->AddRectFilled(p0, p1, active ? col::bg1 : IM_COL32(18, 18, 18, 255), px(6), ImDrawFlags_RoundCornersTop);
     }

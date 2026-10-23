@@ -9,7 +9,7 @@
 cmake_minimum_required(VERSION 3.20)
 # The build's version, shown in the status bar; keep installer/app.rc and
 # installer/creative_cell.nsi in step.
-project(creative_cell VERSION 0.2.0 LANGUAGES C CXX RC)
+project(creative_cell VERSION 0.2.1 LANGUAGES C CXX RC)
 
 # Static MSVC runtime: the installed app runs on a clean Windows without the
 # VC++ redistributable. Set before the dependencies so they match.
