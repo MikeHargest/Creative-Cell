@@ -107,6 +107,7 @@ bool App::init(GLFWwindow* window, const LaunchOptions& opts) {
   }
   if (!renderer_.init()) return false;
   jobs_ = std::make_unique<Jobs>();
+  jobs_->onPost = [] { glfwPostEmptyEvent(); };  // a result wakes the main loop
   thumbs_ = std::make_unique<ThumbCache>(*jobs_, dataDir() / L"thumbs");
   // A thumbnail file gone (cache cleared by hand): made again.
   thumbs_->onMissing = [this](int64_t id) {
@@ -122,12 +123,15 @@ bool App::init(GLFWwindow* window, const LaunchOptions& opts) {
   inspectorOpen_ = lib_.settingInt("ui.inspectorOpen", 1) != 0;
   inspectorW_ = lib_.settingFloat("ui.inspectorW", inspectorW_);
   viewerFrac_ = lib_.settingFloat("ui.viewerFrac", viewerFrac_);
+  infoFolded_ = lib_.settingInt("ui.infoFolded", 0);
+  infoHidden_ = lib_.settingInt("ui.infoHidden", 0) != 0;
   tileSize_ = lib_.settingFloat("ui.tile", tileSize_);
   viewMode_ = static_cast<ViewMode>(lib_.settingInt("ui.view", 0));
   sort_ = static_cast<SortBy>(lib_.settingInt("ui.sort", 0));
   sortDesc_ = lib_.settingInt("ui.sortDesc", 1) != 0;
   viewer_.shading = static_cast<Shading>(lib_.settingInt("viewer.shading", 0));
   viewer_.grid = lib_.settingInt("viewer.grid", 1) != 0;
+  viewer_.ao = lib_.settingInt("viewer.ao", 0) != 0;
   copyOnImport_ = lib_.settingInt("import.copy", 0) != 0;
   libraryDir_ = lib_.setting("import.dir", defaultLibraryDir());
   viewer_.camera.resetToIsometricView();
@@ -148,6 +152,7 @@ bool App::init(GLFWwindow* window, const LaunchOptions& opts) {
 void App::shutdown() {
   saveUiState();
   saveWindowPlace();
+  stopping_ = true;  // (a big file still loading gives up)
   jobs_.reset();  // workers stop first: their results point into the app
   viewer_.mesh.release();
   viewer_.target.release();
@@ -162,12 +167,15 @@ void App::saveUiState() {
   lib_.setSetting("ui.inspectorOpen", inspectorOpen_ ? "1" : "0");
   lib_.setSetting("ui.inspectorW", std::to_string(inspectorW_));
   lib_.setSetting("ui.viewerFrac", std::to_string(viewerFrac_));
+  lib_.setSetting("ui.infoFolded", std::to_string(infoFolded_));
+  lib_.setSetting("ui.infoHidden", infoHidden_ ? "1" : "0");
   lib_.setSetting("ui.tile", std::to_string(tileSize_));
   lib_.setSetting("ui.view", std::to_string(static_cast<int>(viewMode_)));
   lib_.setSetting("ui.sort", std::to_string(static_cast<int>(sort_)));
   lib_.setSetting("ui.sortDesc", sortDesc_ ? "1" : "0");
   lib_.setSetting("viewer.shading", std::to_string(static_cast<int>(viewer_.shading)));
   lib_.setSetting("viewer.grid", viewer_.grid ? "1" : "0");
+  lib_.setSetting("viewer.ao", viewer_.ao ? "1" : "0");
   lib_.setSetting("import.copy", copyOnImport_ ? "1" : "0");
   lib_.setSetting("import.dir", libraryDir_);
   uiStateDirtyAt_ = 0.0;
@@ -337,17 +345,24 @@ void App::scanAll() {
 }
 
 void App::pumpAnalysis() {
+  // A few files at a time, and only so many bytes of them: a big FBX takes
+  // several times its size in memory while it loads. One always goes,
+  // however big.
+  constexpr int64_t kBytesInFlight = 768ll << 20;
   const int limit = std::max(2, jobs_->threads() / 2);
   if (static_cast<int>(analyzing_.size()) >= limit || thumbQueue_.size() >= 3) return;
-  auto start = [this](const Asset& a) {
-    analyzing_.insert(a.id);
+  int64_t inFlight = 0;
+  for (const auto& [id, bytes] : analyzing_) inFlight += bytes;
+  auto start = [this, &inFlight](const Asset& a) {
+    analyzing_[a.id] = a.size;
+    inFlight += a.size;
     const int64_t id = a.id, mtime = a.mtime;
     const std::string path = a.path;
     jobs_->run([this, id, mtime, path] {
       Model model;
       std::string error;
       auto mesh = std::make_shared<RenderMesh>();
-      const bool ok = loadModel(path, model, error);
+      const bool ok = loadModel(path, model, error, [this] { return stopping_.load(); });
       ModelStats stats;
       if (ok) {
         *mesh = buildRenderMesh(model);
@@ -355,7 +370,7 @@ void App::pumpAnalysis() {
       }
       jobs_->post([this, id, mtime, ok, error, stats, mesh] {
         analyzing_.erase(id);
-        if (!lib_.find(id)) return;
+        if (!lib_.find(id) || error == kCancelled) return;
         if (!ok) {
           lib_.setAnalysisError(id, error, mtime);
           thumbs_->forget(id);
@@ -366,8 +381,9 @@ void App::pumpAnalysis() {
       });
     });
   };
-  auto eligible = [this](const Asset* a) {
-    return a && !a->hidden && a->needsAnalysis() && !analyzing_.count(a->id);
+  auto eligible = [&](const Asset* a) {
+    return a && !a->hidden && a->needsAnalysis() && !analyzing_.count(a->id) &&
+           (analyzing_.empty() || inFlight + a->size <= kBytesInFlight);
   };
   // What's on screen first, then the rest.
   for (int64_t id : visible_) {
@@ -449,7 +465,8 @@ void App::startViewerLoad(const std::string& path, int64_t id, int64_t mtime) {
         Model model;
         std::string error;
         auto mesh = std::make_shared<RenderMesh>();
-        const bool ok = loadModel(path, model, error);
+        // Another model picked meanwhile: this one gives up halfway.
+        const bool ok = loadModel(path, model, error, [this, token] { return stopping_ || viewer_.token != token; });
         ModelStats stats;
         if (ok) {
           *mesh = buildRenderMesh(model);
@@ -722,6 +739,17 @@ std::vector<int64_t> App::selectedIds() const {
 
 // --- the frame ---
 
+double App::frameInterval() {
+  // The 3D view moving by itself: smooth.
+  if (viewer_.turntable || viewer_.camera.animating() || viewerMax_ && viewer_.loading) return 1.0 / 60.0;
+  // Work going on that shows (pulses, the status dot, thumbnails arriving).
+  if (viewer_.loading || !toasts_.empty() || scansInFlight_ > 0 || countPending_ > 0 || !analyzing_.empty() ||
+      !thumbQueue_.empty() || jobs_->busy() > 0 || jobs_->hasPosted()) {
+    return 1.0 / 30.0;
+  }
+  return 0.0;
+}
+
 void App::frame() {
   ++frameCount_;
   jobs_->drainMain(6.0);
@@ -914,8 +942,8 @@ void App::handleShortcuts() {
     frameViewer();
   }
   if (ImGui::IsKeyPressed(ImGuiKey_G, false)) viewer_.grid = !viewer_.grid, uiStateDirtyAt_ = ImGui::GetTime();
-  const ImGuiKey shadeKeys[4] = {ImGuiKey_1, ImGuiKey_2, ImGuiKey_3, ImGuiKey_4};
-  for (int i = 0; i < 4; ++i) {
+  const ImGuiKey shadeKeys[5] = {ImGuiKey_1, ImGuiKey_2, ImGuiKey_3, ImGuiKey_4, ImGuiKey_5};
+  for (int i = 0; i < 5; ++i) {
     if (ImGui::IsKeyPressed(shadeKeys[i], false) && !ImGui::GetIO().KeyCtrl) {
       viewer_.shading = static_cast<Shading>(i);
       uiStateDirtyAt_ = ImGui::GetTime();

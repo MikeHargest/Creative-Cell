@@ -14,35 +14,10 @@
 
 using namespace ui;
 
-void App::drawBrand(ImDrawList* dl, ImVec2 pos, float height) {
-  const float cy = pos.y + height * 0.5f;
-  const float mark = px(22);
-  const ImVec2 m0(pos.x, cy - mark * 0.5f);
-  dl->AddRectFilled(m0, ImVec2(m0.x + mark, m0.y + mark), IM_COL32(236, 236, 236, 255), px(5));
-  const ImU32 ink = IM_COL32(12, 12, 12, 255);
-  const float t = std::max(1.5f, px(1.8f));
-  dl->AddLine(ImVec2(m0.x + px(5), m0.y + px(7)), ImVec2(m0.x + px(10), m0.y + px(11)), ink, t);
-  dl->AddLine(ImVec2(m0.x + px(10), m0.y + px(11)), ImVec2(m0.x + px(5), m0.y + px(15)), ink, t);
-  dl->AddLine(ImVec2(m0.x + px(12), m0.y + px(15.5f)), ImVec2(m0.x + px(17), m0.y + px(15.5f)), ink, t);
-  const float titleSize = px(13.5f);
-  dl->AddText(fonts.sans, titleSize, ImVec2(m0.x + mark + px(10), cy - titleSize * 0.55f), col::text, "CREATIVE CELL");
-}
-
 float App::drawAppActions(float rx, float cy) {
   ImDrawList* dl = ImGui::GetWindowDrawList();
   const float btn = px(28);
-  // Account: a placeholder circle until accounts exist.
   rx -= btn;
-  ImGui::SetCursorScreenPos(ImVec2(rx, cy - btn * 0.5f));
-  {
-    const ImVec2 c(rx + btn * 0.5f, cy);
-    ImGui::InvisibleButton("##account", ImVec2(btn, btn));
-    const bool hov = ImGui::IsItemHovered();
-    dl->AddCircle(c, btn * 0.42f, hov ? col::bg4 : col::line, 0, 1.0f);
-    drawIcon(dl, Icon::User, c, px(13), col::text3);
-    if (hov) tooltip("Account: coming in a later version");
-  }
-  rx -= btn + px(4);
   ImGui::SetCursorScreenPos(ImVec2(rx, cy - btn * 0.5f));
   if (iconButton("##settings", Icon::Gear, btn, settingsOpen_, "Settings  (Ctrl+,)")) settingsOpen_ = true;
 
@@ -84,13 +59,10 @@ void App::drawStatusBar(ImVec2 pos, ImVec2 size) {
   beginPanel("##status", pos, size, col::bg1);
   ImDrawList* dl = ImGui::GetWindowDrawList();
   dl->AddLine(pos, ImVec2(pos.x + size.x, pos.y), col::line);
-  const float fs = px(11.5f);
+  const float fs = px(12);
   const float ty = pos.y + (size.y - fs) * 0.5f;
   char buf[160];
-  std::snprintf(buf, sizeof buf, "%s models", formatCount(countAll_).c_str());
   float x = pos.x + px(14);
-  dl->AddText(fonts.mono, fs, ImVec2(x, ty), col::text3, buf);
-  x += fonts.mono->CalcTextSizeA(fs, FLT_MAX, 0, buf).x + px(16);
   if (!selection_.empty()) {
     std::snprintf(buf, sizeof buf, "%s selected", formatCount(static_cast<int64_t>(selection_.size())).c_str());
     dl->AddText(fonts.mono, fs, ImVec2(x, ty), col::text2, buf);
@@ -321,6 +293,21 @@ void App::drawSettings() {
     ImGui::Dummy(ImVec2(0, px(4)));
   };
 
+  gapAndHeader("ACCOUNT");
+  {
+    const float d = px(32);
+    const ImVec2 p = ImGui::GetCursorScreenPos();
+    ImGui::Dummy(ImVec2(d, d));
+    ImDrawList* dl = ImGui::GetWindowDrawList();
+    dl->AddCircle(ImVec2(p.x + d * 0.5f, p.y + d * 0.5f), d * 0.5f, col::line, 0, 1.0f);
+    drawIcon(dl, Icon::User, ImVec2(p.x + d * 0.5f, p.y + d * 0.5f), px(15), col::text3);
+    ImGui::SameLine(0, px(12));
+    ImGui::BeginGroup();
+    ImGui::TextUnformatted("Not signed in");
+    label("Accounts come in a later version, together with the marketplace.");
+    ImGui::EndGroup();
+  }
+
   gapAndHeader("WATCHED FOLDERS");
   label("Folders are indexed where they are; new and changed files are picked up on rescan and at start.");
   ImGui::Dummy(ImVec2(0, px(4)));
@@ -407,7 +394,7 @@ void App::drawSettings() {
       {"Delete", "Remove from library (files stay)"},
       {"Shift+Delete", "Delete files (Recycle Bin)"},
       {"F", "Frame the model"},
-      {"1 2 3 4", "Solid / Solid + edges / Wire / Points"},
+      {"1 2 3 4 5", "Solid / Solid + edges / Wire / Points / Render"},
       {"G", "Floor grid"},
       {"F11 / Esc", "3D view over the whole window / back"},
       {"Left / Right", "File tab: previous / next model in the folder"},
@@ -458,7 +445,7 @@ void App::drawSettings() {
   }
 
   gapAndHeader("LATER");
-  label("Quick export to Blender / Unreal / Unity, the marketplace and accounts have their places reserved");
+  label("Quick export to Blender / Unreal / Unity and the marketplace have their places reserved");
   label("and come in later versions.");
 
   gapAndHeader("ABOUT");

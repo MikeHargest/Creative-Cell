@@ -15,6 +15,7 @@ struct GpuMesh {
   std::vector<RenderMesh::Part> parts;
   glm::vec3 min{0.0f}, max{0.0f};
   size_t vertexCount = 0, indexCount = 0;
+  uint64_t serial = 0;  // a new one each upload (GL may hand the same names out again)
   bool valid() const { return vao != 0; }
   glm::vec3 center() const { return (min + max) * 0.5f; }
   float radius() const { return glm::length(max - min) * 0.5f; }
@@ -44,7 +45,9 @@ class RenderTarget {
   int w_ = 0, h_ = 0, samples_ = 0;
 };
 
-enum class Shading { Solid, SolidWire, Wire, Points };
+// (Saved by number: new ones go at the end.) Render: a sun with shadows on
+// the model and the floor, the sky's light, ambient occlusion.
+enum class Shading { Solid, SolidWire, Wire, Points, Render };
 
 struct ViewParams {
   glm::mat4 view{1.0f}, proj{1.0f};
@@ -54,6 +57,7 @@ struct ViewParams {
   float gridStep = 1.0f;  // a cell
   int highlightPart = -1;  // drawn lighter
   int soloPart = -1;       // only this one drawn
+  bool ao = false;  // ambient occlusion in the solid views (Render has it always)
   glm::vec3 background{0.06f};
   bool clearAlpha = false;  // transparent background (thumbnails)
 };
@@ -69,9 +73,27 @@ class Renderer {
   bool thumbnail(const GpuMesh& mesh, int size, std::vector<uint8_t>& rgba);
 
  private:
-  void drawGrid(const ViewParams& p);
+  // An offscreen buffer of one texture (+ depth) for the AO passes.
+  struct Pass {
+    GLuint fbo = 0, color = 0, depth = 0;
+    int w = 0, h = 0;
+  };
+  bool ensurePass(Pass& t, int w, int h, GLenum format, bool depth);
+  void releasePass(Pass& t);
+  void drawGrid(const ViewParams& p, bool lines, bool shadow);
+  // Normals and depth, occlusion, a blur: aoBlur_.color holds the result.
+  void drawAo(const GpuMesh& m, const ViewParams& p, int w, int h);
+  // Depth seen from the sun; made again only when the mesh or the floor changes.
+  void updateShadowMap(const GpuMesh& m, const ViewParams& p);
 
   GLuint solid_ = 0, flat_ = 0, grid_ = 0;
+  GLuint lit_ = 0, geom_ = 0, ssao_ = 0, blur_ = 0;
+  Pass aoGeom_, aoRaw_, aoBlur_;
+  GLuint shadowFbo_ = 0, shadowTex_ = 0;
+  glm::mat4 lightViewProj_{1.0f};
+  uint64_t shadowSerial_ = 0;
+  int shadowSolo_ = -2;
+  float shadowFloor_ = 0.0f;
   GLuint gridVao_ = 0, gridVbo_ = 0;
   GLuint emptyVao_ = 0;
   GLsizei gridVerts_ = 0;

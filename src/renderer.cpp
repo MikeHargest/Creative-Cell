@@ -27,6 +27,9 @@ in vec3 vN;
 uniform mat4 uView;
 uniform vec3 uBase;
 uniform float uTint;
+uniform int uAOOn;
+uniform sampler2D uAO;
+uniform vec2 uViewport;
 out vec4 oColor;
 void main() {
   vec3 n = normalize(vN);
@@ -41,6 +44,11 @@ void main() {
   vec3 h = normalize(key + vec3(0.0, 0.0, 1.0));
   float spec = pow(max(dot(nv, h), 0.0), 48.0) * 0.10;
   float l = 0.16 + 0.12 * hemi + 0.58 * wrap + 0.12 * f + 0.16 * rim;
+  if (uAOOn != 0) {
+    float ao = pow(texture(uAO, gl_FragCoord.xy / uViewport).r, 1.4);
+    l *= ao;
+    spec *= ao;
+  }
   vec3 c = uBase * l + spec;
   if (!gl_FrontFacing) c *= 0.55;
   c = mix(c, vec3(1.0), uTint);
@@ -79,7 +87,26 @@ in vec3 vW;
 uniform float uStep;
 uniform vec3 uCenter;
 uniform float uFade;
+uniform int uLines;
+uniform int uShadowOn;
+uniform sampler2D uShadow;
+uniform mat4 uLightViewProj;
+uniform float uShadowTexel;
+uniform float uShadowReach;
 out vec4 oColor;
+// How much of the sun this point of the floor sees (a soft 5x5 look-up).
+float sunSeen(vec3 p) {
+  vec4 lc = uLightViewProj * vec4(p, 1.0);
+  vec3 s = lc.xyz / lc.w * 0.5 + 0.5;
+  if (s.x <= 0.0 || s.x >= 1.0 || s.y <= 0.0 || s.y >= 1.0 || s.z >= 1.0) return 1.0;
+  float lit = 0.0;
+  for (int y = -2; y <= 2; ++y) {
+    for (int x = -2; x <= 2; ++x) {
+      lit += s.z - uShadowTexel * 2.0 <= texture(uShadow, s.xy + vec2(x, y) * uShadowTexel * 1.5).r ? 1.0 : 0.0;
+    }
+  }
+  return lit / 25.0;
+}
 float lines(vec2 p) {
   vec2 d = fwidth(p);
   vec2 g = abs(fract(p - 0.5) - 0.5) / max(d, vec2(1e-6));
@@ -92,9 +119,203 @@ void main() {
   float axis = 1.0 - min(min(ad.x, ad.y), 1.0);
   float a = max(max(minor * 0.10, major * 0.20), axis * 0.38);
   float fade = 1.0 - smoothstep(uFade * 0.35, uFade, length(vW.xz - uCenter.xz));
-  oColor = vec4(vec3(0.85), a * fade);
+  float lines = uLines != 0 ? a * fade : 0.0;
+  // The model's shadow: the floor darkened, fading away from the model.
+  float shade = 0.0;
+  if (uShadowOn != 0) {
+    shade = (1.0 - sunSeen(vW)) * 0.55 * (1.0 - smoothstep(uShadowReach * 0.5, uShadowReach, length(vW.xz - uCenter.xz)));
+  }
+  float total = lines + shade * (1.0 - lines);
+  if (total <= 0.002) discard;
+  oColor = vec4(vec3(0.85) * lines / total, total);
 }
 )GLSL";
+
+// Render: one sun (with its shadow map) and the sky, in linear light with
+// a filmic curve. The sun stays put in the world; turn the model to see it
+// from the other side.
+const char* kLitVs = R"GLSL(#version 330 core
+layout(location = 0) in vec3 aPos;
+layout(location = 1) in vec3 aNrm;
+uniform mat4 uView, uProj, uLightViewProj;
+out vec3 vW;
+out vec3 vN;
+out vec4 vLightClip;
+void main() {
+  vW = aPos;
+  vN = aNrm;
+  vLightClip = uLightViewProj * vec4(aPos, 1.0);
+  gl_Position = uProj * uView * vec4(aPos, 1.0);
+}
+)GLSL";
+
+const char* kLitFs = R"GLSL(#version 330 core
+in vec3 vW;
+in vec3 vN;
+in vec4 vLightClip;
+uniform vec3 uSun;
+uniform vec3 uCamPos;
+uniform sampler2D uShadow;
+uniform float uShadowTexel;
+uniform int uAOOn;
+uniform sampler2D uAO;
+uniform vec2 uViewport;
+uniform float uTint;
+out vec4 oColor;
+float sunSeen(vec3 n, vec3 l) {
+  vec3 p = vLightClip.xyz / vLightClip.w * 0.5 + 0.5;
+  if (p.x <= 0.0 || p.x >= 1.0 || p.y <= 0.0 || p.y >= 1.0 || p.z >= 1.0) return 1.0;
+  float bias = uShadowTexel * (1.5 + 3.0 * (1.0 - max(dot(n, l), 0.0)));
+  float lit = 0.0;
+  for (int y = -1; y <= 1; ++y) {
+    for (int x = -1; x <= 1; ++x) lit += p.z - bias <= texture(uShadow, p.xy + vec2(x, y) * uShadowTexel).r ? 1.0 : 0.0;
+  }
+  return lit / 9.0;
+}
+vec3 aces(vec3 x) { return clamp((x * (2.51 * x + 0.03)) / (x * (2.43 * x + 0.59) + 0.14), 0.0, 1.0); }
+void main() {
+  vec3 N = normalize(vN);
+  if (!gl_FrontFacing) N = -N;
+  vec3 V = normalize(uCamPos - vW);
+  vec3 L = normalize(uSun);
+  vec3 H = normalize(L + V);
+  float ndl = max(dot(N, L), 0.0);
+  float sun = ndl > 0.0 ? sunSeen(N, L) : 0.0;
+  float ao = uAOOn != 0 ? pow(texture(uAO, gl_FragCoord.xy / uViewport).r, 1.6) : 1.0;
+  vec3 albedo = vec3(0.45);
+  vec3 sky = mix(vec3(0.05), vec3(0.30), N.y * 0.5 + 0.5);
+  float spec = pow(max(dot(N, H), 0.0), 60.0) * 0.35 * ndl * sun;
+  float rim = pow(1.0 - max(dot(N, V), 0.0), 5.0) * 0.10;
+  vec3 c = albedo * (ndl * sun * 1.6 + sky * ao) + vec3(spec) + vec3(rim * ao);
+  c = pow(aces(c), vec3(1.0 / 2.2));
+  if (!gl_FrontFacing) c *= 0.6;
+  oColor = vec4(mix(c, vec3(1.0), uTint), 1.0);
+}
+)GLSL";
+
+// Ambient occlusion (as Expanse's): view normals and depth, then 16 samples
+// around each pixel in its hemisphere, then a 4x4 blur.
+const char* kGeomVs = R"GLSL(#version 330 core
+layout(location = 0) in vec3 aPos;
+layout(location = 1) in vec3 aNrm;
+uniform mat4 uView, uProj;
+out vec3 vViewPos;
+out vec3 vViewN;
+void main() {
+  vec4 vp = uView * vec4(aPos, 1.0);
+  vViewPos = vp.xyz;
+  vViewN = mat3(uView) * aNrm;
+  gl_Position = uProj * vp;
+}
+)GLSL";
+
+const char* kGeomFs = R"GLSL(#version 330 core
+in vec3 vViewPos;
+in vec3 vViewN;
+out vec4 oColor;
+void main() {
+  vec3 n = normalize(vViewN);
+  if (!gl_FrontFacing) n = -n;
+  oColor = vec4(n, vViewPos.z);
+}
+)GLSL";
+
+const char* kFullscreenVs = R"GLSL(#version 330 core
+out vec2 vUv;
+void main() {
+  vec2 p = vec2((gl_VertexID << 1) & 2, gl_VertexID & 2);
+  vUv = p;
+  gl_Position = vec4(p * 2.0 - 1.0, 0.0, 1.0);
+}
+)GLSL";
+
+const char* kSsaoFs = R"GLSL(#version 330 core
+in vec2 vUv;
+uniform sampler2D uGeom;
+uniform mat4 uProj;
+uniform mat4 uInvProj;
+uniform float uRadius;
+uniform vec3 uKernel[16];
+out vec4 oColor;
+vec3 viewPos(vec2 uv, float z) {
+  vec4 p = uInvProj * vec4(uv * 2.0 - 1.0, 1.0, 1.0);
+  vec3 ray = p.xyz / p.w;
+  return ray * (z / ray.z);
+}
+void main() {
+  vec4 g = texture(uGeom, vUv);
+  if (g.w == 0.0) {
+    oColor = vec4(1.0);
+    return;
+  }
+  vec3 P = viewPos(vUv, g.w);
+  vec3 N = normalize(g.xyz);
+  // A turn per pixel from a 4x4 pattern; the blur averages it out.
+  vec2 cell = mod(floor(gl_FragCoord.xy), 4.0);
+  float ang = fract(sin(dot(cell, vec2(12.9898, 78.233))) * 43758.5453) * 6.2831853;
+  vec3 rnd = vec3(cos(ang), sin(ang), 0.37);
+  vec3 T = normalize(rnd - N * dot(rnd, N));
+  mat3 tbn = mat3(T, cross(N, T), N);
+  float occ = 0.0;
+  for (int i = 0; i < 16; ++i) {
+    vec3 s = P + tbn * uKernel[i] * uRadius;
+    vec4 c = uProj * vec4(s, 1.0);
+    vec2 suv = c.xy / c.w * 0.5 + 0.5;
+    if (suv.x < 0.0 || suv.x > 1.0 || suv.y < 0.0 || suv.y > 1.0) continue;
+    float sz = texture(uGeom, suv).w;
+    if (sz == 0.0) continue;
+    float range = smoothstep(0.0, 1.0, uRadius / abs(P.z - sz));
+    occ += (sz >= s.z + uRadius * 0.03 ? 1.0 : 0.0) * range;
+  }
+  oColor = vec4(1.0 - occ / 16.0);
+}
+)GLSL";
+
+const char* kBlurFs = R"GLSL(#version 330 core
+in vec2 vUv;
+uniform sampler2D uSrc;
+uniform vec2 uTexel;
+out vec4 oColor;
+void main() {
+  float sum = 0.0;
+  for (int y = -2; y < 2; ++y) {
+    for (int x = -2; x < 2; ++x) sum += texture(uSrc, vUv + (vec2(x, y) + 0.5) * uTexel).r;
+  }
+  oColor = vec4(sum / 16.0);
+}
+)GLSL";
+
+constexpr int kShadowSize = 2048;
+constexpr GLenum kDrawFramebufferBinding = 0x8CA6;  // GL_DRAW_FRAMEBUFFER_BINDING
+
+// Hemisphere of sample offsets (z up), denser near the middle.
+const glm::vec3* ssaoKernel() {
+  static glm::vec3 kernel[16];
+  static bool made = false;
+  if (!made) {
+    uint32_t seed = 12345u;
+    auto rnd = [&] {
+      seed = seed * 1664525u + 1013904223u;
+      return (seed >> 8) / 16777216.0f;
+    };
+    for (int i = 0; i < 16; ++i) {
+      glm::vec3 v;
+      do {
+        v = glm::vec3(rnd() * 2.0f - 1.0f, rnd() * 2.0f - 1.0f, rnd());
+      } while (glm::length(v) > 1.0f || glm::length(v) < 0.1f || v.z < 0.15f);
+      const float t = static_cast<float>(i) / 16.0f;
+      kernel[i] = glm::normalize(v) * glm::mix(0.15f, 1.0f, t * t);
+    }
+    made = true;
+  }
+  return kernel;
+}
+
+// From the upper front right (yaw 35, 50 degrees above the horizon), as Expanse's default sun.
+glm::vec3 sunDirection() {
+  const float yaw = glm::radians(35.0f), pitch = glm::radians(50.0f);
+  return glm::vec3(std::cos(pitch) * std::sin(yaw), std::sin(pitch), std::cos(pitch) * std::cos(yaw));
+}
 
 GLuint compile(GLenum type, const char* src) {
   GLuint s = glx::CreateShader(type);
@@ -134,6 +355,8 @@ void setMatrices(GLuint prog, const glm::mat4& view, const glm::mat4& proj) {
   glx::UniformMatrix4fv(glx::GetUniformLocation(prog, "uView"), 1, GL_FALSE, glm::value_ptr(view));
   glx::UniformMatrix4fv(glx::GetUniformLocation(prog, "uProj"), 1, GL_FALSE, glm::value_ptr(proj));
 }
+
+GLint uloc(GLuint prog, const char* name) { return glx::GetUniformLocation(prog, name); }
 
 void drawParts(const GpuMesh& m, GLenum mode, int solo, GLint tintLoc, int highlight) {
   for (size_t i = 0; i < m.parts.size(); ++i) {
@@ -178,6 +401,8 @@ void uploadMesh(const RenderMesh& mesh, GpuMesh& out) {
   out.max = mesh.max;
   out.vertexCount = mesh.vertices.size() / 6;
   out.indexCount = mesh.indices.size();
+  static uint64_t serials = 0;
+  out.serial = ++serials;
 }
 
 bool RenderTarget::resize(int w, int h, int samples) {
@@ -259,20 +484,146 @@ bool Renderer::init() {
   solid_ = program(kSolidVs, kSolidFs);
   flat_ = program(kFlatVs, kFlatFs);
   grid_ = program(kGridVs, kGridFs);
+  lit_ = program(kLitVs, kLitFs);
+  geom_ = program(kGeomVs, kGeomFs);
+  ssao_ = program(kFullscreenVs, kSsaoFs);
+  blur_ = program(kFullscreenVs, kBlurFs);
   glx::GenVertexArrays(1, &emptyVao_);
-  return solid_ && flat_ && grid_;
+  // Samplers: 1 the shadow map, 2 the occlusion.
+  for (GLuint prog : {solid_, lit_, grid_}) {
+    glx::UseProgram(prog);
+    glx::Uniform1i(uloc(prog, "uShadow"), 1);
+    glx::Uniform1i(uloc(prog, "uAO"), 2);
+  }
+  glx::UseProgram(ssao_);
+  glx::Uniform3fv(uloc(ssao_, "uKernel"), 16, glm::value_ptr(ssaoKernel()[0]));
+  glx::UseProgram(0);
+  return solid_ && flat_ && grid_ && lit_ && geom_ && ssao_ && blur_;
 }
 
 void Renderer::shutdown() {
   thumbTarget_.release();
-  if (solid_) glx::DeleteProgram(solid_);
-  if (flat_) glx::DeleteProgram(flat_);
-  if (grid_) glx::DeleteProgram(grid_);
+  releasePass(aoGeom_);
+  releasePass(aoRaw_);
+  releasePass(aoBlur_);
+  if (shadowFbo_) glx::DeleteFramebuffers(1, &shadowFbo_);
+  if (shadowTex_) glDeleteTextures(1, &shadowTex_);
+  shadowFbo_ = shadowTex_ = 0;
+  for (GLuint* prog : {&solid_, &flat_, &grid_, &lit_, &geom_, &ssao_, &blur_}) {
+    if (*prog) glx::DeleteProgram(*prog);
+    *prog = 0;
+  }
   if (emptyVao_) glx::DeleteVertexArrays(1, &emptyVao_);
-  solid_ = flat_ = grid_ = emptyVao_ = 0;
+  emptyVao_ = 0;
 }
 
-void Renderer::drawGrid(const ViewParams& p) {
+bool Renderer::ensurePass(Pass& t, int w, int h, GLenum format, bool depth) {
+  if (t.fbo && t.w == w && t.h == h) return true;
+  releasePass(t);
+  t.w = w, t.h = h;
+  const bool r8 = format == GL_R8;
+  glGenTextures(1, &t.color);
+  glBindTexture(GL_TEXTURE_2D, t.color);
+  glTexImage2D(GL_TEXTURE_2D, 0, format, w, h, 0, r8 ? GL_RED : GL_RGBA, r8 ? GL_UNSIGNED_BYTE : GL_FLOAT, nullptr);
+  glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, r8 ? GL_LINEAR : GL_NEAREST);
+  glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, r8 ? GL_LINEAR : GL_NEAREST);
+  glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_EDGE);
+  glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE);
+  glx::GenFramebuffers(1, &t.fbo);
+  glx::BindFramebuffer(GL_FRAMEBUFFER, t.fbo);
+  glx::FramebufferTexture2D(GL_FRAMEBUFFER, GL_COLOR_ATTACHMENT0, GL_TEXTURE_2D, t.color, 0);
+  if (depth) {
+    glx::GenRenderbuffers(1, &t.depth);
+    glx::BindRenderbuffer(GL_RENDERBUFFER, t.depth);
+    glx::RenderbufferStorage(GL_RENDERBUFFER, GL_DEPTH_COMPONENT24, w, h);
+    glx::FramebufferRenderbuffer(GL_FRAMEBUFFER, GL_DEPTH_ATTACHMENT, GL_RENDERBUFFER, t.depth);
+  }
+  const bool ok = glx::CheckFramebufferStatus(GL_FRAMEBUFFER) == GL_FRAMEBUFFER_COMPLETE;
+  if (!ok) releasePass(t);
+  return ok;
+}
+
+void Renderer::releasePass(Pass& t) {
+  if (t.fbo) glx::DeleteFramebuffers(1, &t.fbo);
+  if (t.color) glDeleteTextures(1, &t.color);
+  if (t.depth) glx::DeleteRenderbuffers(1, &t.depth);
+  t = Pass();
+}
+
+void Renderer::drawAo(const GpuMesh& m, const ViewParams& p, int w, int h) {
+  if (!ensurePass(aoGeom_, w, h, GL_RGBA32F, true) || !ensurePass(aoRaw_, w, h, GL_R8, false) ||
+      !ensurePass(aoBlur_, w, h, GL_R8, false)) {
+    return;
+  }
+  glx::BindFramebuffer(GL_FRAMEBUFFER, aoGeom_.fbo);
+  glViewport(0, 0, w, h);
+  glClearColor(0.0f, 0.0f, 0.0f, 0.0f);
+  glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT);
+  glEnable(GL_DEPTH_TEST);
+  glx::UseProgram(geom_);
+  setMatrices(geom_, p.view, p.proj);
+  glx::BindVertexArray(m.vao);
+  drawParts(m, GL_TRIANGLES, p.soloPart, -1, -1);
+
+  glDisable(GL_DEPTH_TEST);
+  glx::BindVertexArray(emptyVao_);
+  glx::BindFramebuffer(GL_FRAMEBUFFER, aoRaw_.fbo);
+  glx::UseProgram(ssao_);
+  glx::UniformMatrix4fv(uloc(ssao_, "uProj"), 1, GL_FALSE, glm::value_ptr(p.proj));
+  const glm::mat4 invProj = glm::inverse(p.proj);
+  glx::UniformMatrix4fv(uloc(ssao_, "uInvProj"), 1, GL_FALSE, glm::value_ptr(invProj));
+  // A twentieth of the model: creases and contacts, not the whole shape.
+  glx::Uniform1f(uloc(ssao_, "uRadius"), std::max(m.radius() * 0.05f, 1e-6f));
+  glx::ActiveTexture(GL_TEXTURE0);
+  glBindTexture(GL_TEXTURE_2D, aoGeom_.color);
+  glDrawArrays(GL_TRIANGLES, 0, 3);
+
+  glx::BindFramebuffer(GL_FRAMEBUFFER, aoBlur_.fbo);
+  glx::UseProgram(blur_);
+  const glm::vec2 texel(1.0f / w, 1.0f / h);
+  glx::Uniform2fv(uloc(blur_, "uTexel"), 1, glm::value_ptr(texel));
+  glBindTexture(GL_TEXTURE_2D, aoRaw_.color);
+  glDrawArrays(GL_TRIANGLES, 0, 3);
+  glBindTexture(GL_TEXTURE_2D, 0);
+}
+
+void Renderer::updateShadowMap(const GpuMesh& m, const ViewParams& p) {
+  if (!shadowFbo_) {
+    glGenTextures(1, &shadowTex_);
+    glBindTexture(GL_TEXTURE_2D, shadowTex_);
+    glTexImage2D(GL_TEXTURE_2D, 0, GL_DEPTH_COMPONENT24, kShadowSize, kShadowSize, 0, GL_DEPTH_COMPONENT, GL_FLOAT,
+                 nullptr);
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_NEAREST);
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_NEAREST);
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_EDGE);
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE);
+    glx::GenFramebuffers(1, &shadowFbo_);
+    glx::BindFramebuffer(GL_FRAMEBUFFER, shadowFbo_);
+    glx::FramebufferTexture2D(GL_FRAMEBUFFER, GL_DEPTH_ATTACHMENT, GL_TEXTURE_2D, shadowTex_, 0);
+    glDrawBuffer(GL_NONE);
+    glReadBuffer(GL_NONE);
+  }
+  if (shadowSerial_ == m.serial && shadowSolo_ == p.soloPart && shadowFloor_ == p.floorY) return;
+  shadowSerial_ = m.serial, shadowSolo_ = p.soloPart, shadowFloor_ = p.floorY;
+  // An ortho box around the model, wide enough for its shadow on the floor.
+  const glm::vec3 sun = sunDirection();
+  const glm::vec3 c = m.center();
+  const float r = std::max(m.radius(), 1e-6f) * 1.8f;
+  lightViewProj_ = glm::ortho(-r, r, -r, r, 0.0f, 4.0f * r) * glm::lookAt(c + sun * (2.0f * r), c, glm::vec3(0, 1, 0));
+  glx::BindFramebuffer(GL_FRAMEBUFFER, shadowFbo_);
+  glViewport(0, 0, kShadowSize, kShadowSize);
+  glEnable(GL_DEPTH_TEST);
+  glClear(GL_DEPTH_BUFFER_BIT);
+  glEnable(GL_POLYGON_OFFSET_FILL);
+  glPolygonOffset(1.5f, 3.0f);
+  glx::UseProgram(flat_);
+  setMatrices(flat_, glm::mat4(1.0f), lightViewProj_);
+  glx::BindVertexArray(m.vao);
+  drawParts(m, GL_TRIANGLES, p.soloPart, -1, -1);
+  glDisable(GL_POLYGON_OFFSET_FILL);
+}
+
+void Renderer::drawGrid(const ViewParams& p, bool lines, bool shadow) {
   glx::UseProgram(grid_);
   setMatrices(grid_, p.view, p.proj);
   const glm::vec3 center(0.0f, p.floorY, 0.0f);
@@ -281,6 +632,16 @@ void Renderer::drawGrid(const ViewParams& p) {
   glx::Uniform1f(glx::GetUniformLocation(grid_, "uExtent"), extent);
   glx::Uniform1f(glx::GetUniformLocation(grid_, "uStep"), p.gridStep);
   glx::Uniform1f(glx::GetUniformLocation(grid_, "uFade"), p.gridStep * 60.0f);
+  glx::Uniform1i(uloc(grid_, "uLines"), lines ? 1 : 0);
+  glx::Uniform1i(uloc(grid_, "uShadowOn"), shadow ? 1 : 0);
+  if (shadow) {
+    glx::UniformMatrix4fv(uloc(grid_, "uLightViewProj"), 1, GL_FALSE, glm::value_ptr(lightViewProj_));
+    glx::Uniform1f(uloc(grid_, "uShadowTexel"), 1.0f / kShadowSize);
+    glx::Uniform1f(uloc(grid_, "uShadowReach"), p.gridStep * 40.0f);
+    glx::ActiveTexture(GL_TEXTURE1);
+    glBindTexture(GL_TEXTURE_2D, shadowTex_);
+    glx::ActiveTexture(GL_TEXTURE0);
+  }
   glEnable(GL_BLEND);
   glx::BlendFuncSeparate(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA, GL_ONE, GL_ONE_MINUS_SRC_ALPHA);
   glDepthMask(GL_FALSE);
@@ -291,6 +652,26 @@ void Renderer::drawGrid(const ViewParams& p) {
 }
 
 void Renderer::draw(const GpuMesh& m, const ViewParams& p) {
+  const bool render = p.shading == Shading::Render && m.valid();
+  const bool aoOn = m.valid() && (render || (p.ao && (p.shading == Shading::Solid || p.shading == Shading::SolidWire)));
+  GLint vp[4], fbo = 0;
+  glGetIntegerv(GL_VIEWPORT, vp);
+  if (render || aoOn) {
+    // The passes draw elsewhere; then back to the caller's framebuffer.
+    glGetIntegerv(kDrawFramebufferBinding, &fbo);
+    if (render) updateShadowMap(m, p);
+    if (aoOn) drawAo(m, p, vp[2], vp[3]);
+    glx::BindFramebuffer(GL_FRAMEBUFFER, static_cast<GLuint>(fbo));
+    glViewport(vp[0], vp[1], vp[2], vp[3]);
+  }
+  const glm::vec2 viewport(static_cast<float>(vp[2]), static_cast<float>(vp[3]));
+  auto bindAo = [&](GLuint prog) {
+    glx::Uniform1i(uloc(prog, "uAOOn"), aoOn && aoBlur_.color ? 1 : 0);
+    glx::Uniform2fv(uloc(prog, "uViewport"), 1, glm::value_ptr(viewport));
+    glx::ActiveTexture(GL_TEXTURE2);
+    glBindTexture(GL_TEXTURE_2D, aoOn ? aoBlur_.color : 0);
+    glx::ActiveTexture(GL_TEXTURE0);
+  };
   glClearColor(p.background.r, p.background.g, p.background.b, p.clearAlpha ? 0.0f : 1.0f);
   glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT);
   glEnable(GL_DEPTH_TEST);
@@ -300,9 +681,24 @@ void Renderer::draw(const GpuMesh& m, const ViewParams& p) {
   if (m.valid()) {
     glx::BindVertexArray(m.vao);
     const bool solid = p.shading == Shading::Solid || p.shading == Shading::SolidWire;
-    if (solid) {
+    if (render) {
+      glx::UseProgram(lit_);
+      setMatrices(lit_, p.view, p.proj);
+      glx::UniformMatrix4fv(uloc(lit_, "uLightViewProj"), 1, GL_FALSE, glm::value_ptr(lightViewProj_));
+      const glm::vec3 sun = sunDirection();
+      const glm::vec3 eye = glm::vec3(glm::inverse(p.view)[3]);
+      glx::Uniform3fv(uloc(lit_, "uSun"), 1, glm::value_ptr(sun));
+      glx::Uniform3fv(uloc(lit_, "uCamPos"), 1, glm::value_ptr(eye));
+      glx::Uniform1f(uloc(lit_, "uShadowTexel"), 1.0f / kShadowSize);
+      bindAo(lit_);
+      glx::ActiveTexture(GL_TEXTURE1);
+      glBindTexture(GL_TEXTURE_2D, shadowTex_);
+      glx::ActiveTexture(GL_TEXTURE0);
+      drawParts(m, GL_TRIANGLES, p.soloPart, uloc(lit_, "uTint"), p.highlightPart);
+    } else if (solid) {
       glx::UseProgram(solid_);
       setMatrices(solid_, p.view, p.proj);
+      bindAo(solid_);
       const glm::vec3 base(0.78f);
       glx::Uniform3fv(glx::GetUniformLocation(solid_, "uBase"), 1, glm::value_ptr(base));
       glEnable(GL_POLYGON_OFFSET_FILL);
@@ -320,7 +716,7 @@ void Renderer::draw(const GpuMesh& m, const ViewParams& p) {
       glDisable(GL_POLYGON_OFFSET_FILL);
       glColorMask(GL_TRUE, GL_TRUE, GL_TRUE, GL_TRUE);
     }
-    if (p.shading != Shading::Solid) {
+    if (p.shading != Shading::Solid && !render) {
       glx::UseProgram(flat_);
       setMatrices(flat_, p.view, p.proj);
       const GLint colorLoc = glx::GetUniformLocation(flat_, "uColor");
@@ -352,8 +748,13 @@ void Renderer::draw(const GpuMesh& m, const ViewParams& p) {
     }
     glx::BindVertexArray(0);
   }
-  if (p.grid) drawGrid(p);
+  if (p.grid || render) drawGrid(p, p.grid, render);
   glx::UseProgram(0);
+  for (GLenum unit : {GL_TEXTURE1, GL_TEXTURE2}) {
+    glx::ActiveTexture(unit);
+    glBindTexture(GL_TEXTURE_2D, 0);
+  }
+  glx::ActiveTexture(GL_TEXTURE0);
   glDisable(GL_DEPTH_TEST);
 }
 

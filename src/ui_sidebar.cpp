@@ -47,8 +47,8 @@ RowState sideRow(const char* id, Icon icon, const char* label, int count, bool s
   char buf[32] = "";
   if (count >= 0) {
     std::snprintf(buf, sizeof buf, "%s", formatCount(count).c_str());
-    countW = fonts.mono->CalcTextSizeA(px(11), FLT_MAX, 0, buf).x;
-    dl->AddText(fonts.mono, px(11), ImVec2(e.x - px(10) - countW, cy - px(6)), selected ? col::text2 : col::text3, buf);
+    countW = fonts.mono->CalcTextSizeA(px(12), FLT_MAX, 0, buf).x;
+    dl->AddText(fonts.mono, px(12), ImVec2(e.x - px(10) - countW, cy - px(6.5f)), selected ? col::text2 : col::text3, buf);
   }
   textClipped(dl, fonts.sans, textSize(), ImVec2(x, cy - textSize() * 0.5f), selected || hov ? col::text : fg, label,
               e.x - x - countW - px(18));
@@ -67,13 +67,6 @@ void App::drawSidebar(ImVec2 pos, ImVec2 size) {
   ImDrawList* panelDl = ImGui::GetWindowDrawList();
   panelDl->AddLine(ImVec2(pos.x + size.x - 1, pos.y), ImVec2(pos.x + size.x - 1, pos.y + size.y), col::line);
 
-  // The app's mark and name.
-  {
-    const ImVec2 p = ImGui::GetCursorScreenPos();
-    const float h = px(36);
-    drawBrand(panelDl, ImVec2(p.x + px(6), p.y), h);
-    ImGui::Dummy(ImVec2(0, h + px(6)));
-  }
   // Workspaces: the library; the marketplace keeps its place for later.
   {
     const float w = ImGui::GetContentRegionAvail().x, h = px(34);
@@ -95,10 +88,10 @@ void App::drawSidebar(ImVec2 pos, ImVec2 size) {
       drawIcon(panelDl, icon, ImVec2(p.x + px(19), cy), px(15), fg);
       panelDl->AddText(fonts.sans, px(14), ImVec2(p.x + px(36), cy - px(7.5f)), fg, label);
       if (badge) {
-        const float bw = fonts.mono->CalcTextSizeA(px(9.5f), FLT_MAX, 0, badge).x + px(10);
+        const float bw = fonts.mono->CalcTextSizeA(px(10.5f), FLT_MAX, 0, badge).x + px(10);
         const ImVec2 b0(e.x - bw - px(10), cy - px(8));
         panelDl->AddRect(b0, ImVec2(b0.x + bw, b0.y + px(16)), col::bg4, px(3));
-        panelDl->AddText(fonts.mono, px(9.5f), ImVec2(b0.x + px(5), b0.y + px(3)), col::text3, badge);
+        panelDl->AddText(fonts.mono, px(10.5f), ImVec2(b0.x + px(5), b0.y + px(3)), col::text3, badge);
       }
       if (!enabled && hov) tooltip("Marketplace is planned for a later version");
     };
@@ -111,8 +104,7 @@ void App::drawSidebar(ImVec2 pos, ImVec2 size) {
     panelDl->AddLine(ImVec2(pos.x, sp.y + px(4)), ImVec2(pos.x + size.x - 1, sp.y + px(4)), col::line);
   }
 
-  const float hintH = px(64);
-  ImGui::BeginChild("##sideScroll", ImVec2(0, pos.y + size.y - ImGui::GetCursorScreenPos().y - hintH - px(16)), 0);
+  ImGui::BeginChild("##sideScroll", ImVec2(0, pos.y + size.y - ImGui::GetCursorScreenPos().y - px(8)), 0);
   ImGui::PushStyleVar(ImGuiStyleVar_ItemSpacing, ImVec2(0, px(2)));
 
   // --- the models ---
@@ -271,16 +263,5 @@ void App::drawSidebar(ImVec2 pos, ImVec2 size) {
   ImGui::PopStyleVar();
   ImGui::EndChild();
 
-  // A hint at the bottom.
-  const ImVec2 hp(pos.x + px(10), pos.y + size.y - hintH - px(8));
-  const ImVec2 he(pos.x + size.x - px(10), pos.y + size.y - px(8));
-  panelDl->AddRect(hp, he, col::line, px(6));
-  drawIcon(panelDl, Icon::Import, ImVec2(hp.x + px(18), hp.y + px(20)), px(13), col::text3);
-  ImGui::PushClipRect(hp, he, true);
-  const float wrap = he.x - hp.x - px(44);
-  panelDl->AddText(fonts.sans, smallSize(), ImVec2(hp.x + px(34), hp.y + px(12)), col::text2, "Drop to import");
-  panelDl->AddText(fonts.sans, px(11), ImVec2(hp.x + px(34), hp.y + px(30)), col::text3,
-                   "FBX, OBJ, glTF, GLB, STL files or whole folders", nullptr, wrap);
-  ImGui::PopClipRect();
   endPanel();
 }

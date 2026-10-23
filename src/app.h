@@ -5,6 +5,8 @@
 #include <cstdint>
 #include <memory>
 #include <string>
+#include <atomic>
+#include <unordered_map>
 #include <unordered_set>
 #include <vector>
 
@@ -67,6 +69,8 @@ class App {
     pendingImport_.insert(pendingImport_.end(), paths.begin(), paths.end());
   }
   bool wantsQuit() const { return quit_; }
+  // How soon the next frame is needed: 0 — not until an event (nothing moves).
+  double frameInterval();
   // Window place / size, kept between runs.
   void saveWindowPlace();
   void restoreWindowPlace();
@@ -110,9 +114,7 @@ class App {
   bool isSelected(int64_t id) const { return selection_.count(id) != 0; }
 
   // --- UI (ui_*.cpp) ---
-  // The mark and name (top of the sidebar).
-  void drawBrand(ImDrawList* dl, ImVec2 pos, float height);
-  // Import, settings, account, placed leftwards from `rx` in the current
+  // Import and settings, placed leftwards from `rx` in the current
   // window (the browser's toolbar); returns where they end.
   float drawAppActions(float rx, float cy);
   void drawSidebar(ImVec2 pos, ImVec2 size);
@@ -177,7 +179,8 @@ class App {
   int64_t anchor_ = 0;
 
   // Analysis (load + stats + thumbnail) in the background.
-  std::unordered_set<int64_t> analyzing_;
+  std::unordered_map<int64_t, int64_t> analyzing_;  // asset -> its file's size
+  std::atomic<bool> stopping_{false};  // shutting down: loads give up
   struct PendingThumb {
     int64_t id;
     std::shared_ptr<RenderMesh> mesh;
@@ -188,7 +191,7 @@ class App {
   // The 3D view of the focused asset.
   struct Viewer {
     int64_t assetId = 0;
-    uint64_t token = 0;
+    std::atomic<uint64_t> token{0};  // a new one each load (read by the loading thread)
     bool loading = false;
     std::string error;
     GpuMesh mesh;
@@ -196,7 +199,9 @@ class App {
     RenderTarget target;
     Shading shading = Shading::Solid;
     bool grid = true;
+    bool ao = false;  // ambient occlusion in Solid / Edges (Render has it always)
     bool turntable = false;
+    std::vector<float> drawnSig;  // what the picture in `target` was drawn from
     int hoverPart = -1, soloPart = -1;
     float floorY = 0.0f, gridStep = 1.0f;
     double loadStarted = 0.0;
@@ -211,6 +216,8 @@ class App {
   float sidebarW_ = 248.0f;
   float inspectorW_ = 400.0f;
   float viewerFrac_ = 0.52f;
+  bool infoHidden_ = false;  // the info under the 3D view folded away: the view takes the panel
+  int infoFolded_ = 0;  // folded: inspector 1 geometry, 2 file, 4 collections; 8 the viewer's outliner
   bool sidebarOpen_ = true, inspectorOpen_ = true;
   bool viewerMax_ = false;  // the 3D view over the whole window (F11)
   // Files opened from Explorer, each a tab next to the Library tab (one

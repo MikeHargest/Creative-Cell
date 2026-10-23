@@ -150,8 +150,8 @@ void App::viewerModeFrame(float top) {
     if (ImGui::IsKeyPressed(ImGuiKey_LeftArrow) || ImGui::IsKeyPressed(ImGuiKey_PageUp)) stepSibling(-1);
     if (ImGui::IsKeyPressed(ImGuiKey_F, false)) frameViewer();
     if (ImGui::IsKeyPressed(ImGuiKey_G, false)) viewer_.grid = !viewer_.grid, uiStateDirtyAt_ = ImGui::GetTime();
-    const ImGuiKey shadeKeys[4] = {ImGuiKey_1, ImGuiKey_2, ImGuiKey_3, ImGuiKey_4};
-    for (int i = 0; i < 4; ++i) {
+    const ImGuiKey shadeKeys[5] = {ImGuiKey_1, ImGuiKey_2, ImGuiKey_3, ImGuiKey_4, ImGuiKey_5};
+    for (int i = 0; i < 5; ++i) {
       if (ImGui::IsKeyPressed(shadeKeys[i], false) && !ImGui::GetIO().KeyCtrl) {
         viewer_.shading = static_cast<Shading>(i);
         uiStateDirtyAt_ = ImGui::GetTime();
@@ -186,8 +186,8 @@ void App::drawViewerModeBar(ImVec2 pos, ImVec2 size) {
     }
     char buf[32];
     std::snprintf(buf, sizeof buf, "%d / %zu", i + 1, siblings_.size());
-    dl->AddText(fonts.mono, px(11.5f), ImVec2(x, cy - px(6)), col::text3, buf);
-    x += fonts.mono->CalcTextSizeA(px(11.5f), FLT_MAX, 0, buf).x + px(16);
+    dl->AddText(fonts.mono, px(12.5f), ImVec2(x, cy - px(6)), col::text3, buf);
+    x += fonts.mono->CalcTextSizeA(px(12.5f), FLT_MAX, 0, buf).x + px(16);
   }
 
   // Right side: what can be done with it.
@@ -231,6 +231,6 @@ void App::drawViewerModeBar(ImVec2 pos, ImVec2 size) {
            (s.parts == 1 ? " mesh   " : " meshes   ") + formatLength(s.size.x, s.metric) + " x " +
            formatLength(s.size.y, s.metric) + " x " + formatLength(s.size.z, s.metric) + "   " + meta;
   }
-  textClipped(dl, fonts.mono, px(11), ImVec2(x, cy + px(3)), col::text3, meta.c_str(), room);
+  textClipped(dl, fonts.mono, px(12), ImVec2(x, cy + px(3)), col::text3, meta.c_str(), room);
   endPanel();
 }

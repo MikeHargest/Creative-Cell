@@ -15,8 +15,8 @@ constexpr ImU32 bg3 = IM_COL32(30, 30, 30, 255);     // hover
 constexpr ImU32 bg4 = IM_COL32(40, 40, 40, 255);     // pressed, strong border
 constexpr ImU32 line = IM_COL32(32, 32, 32, 255);    // separators, outlines
 constexpr ImU32 text = IM_COL32(232, 232, 232, 255);
-constexpr ImU32 text2 = IM_COL32(160, 160, 160, 255);  // secondary
-constexpr ImU32 text3 = IM_COL32(100, 100, 100, 255);  // hints, disabled
+constexpr ImU32 text2 = IM_COL32(176, 176, 176, 255);  // secondary
+constexpr ImU32 text3 = IM_COL32(124, 124, 124, 255);  // hints, disabled
 constexpr ImU32 accent = IM_COL32(250, 250, 250, 255);  // selection
 constexpr ImU32 warn = IM_COL32(200, 200, 200, 255);    // (still grey: a sign, not a color)
 }  // namespace col
@@ -42,7 +42,7 @@ float monoSize();   // numbers
 
 enum class Icon {
   Search, Grid, List, Folder, FolderPlus, Collection, Plus, Gear, User, Store, Clock, Box, Warning, Trash,
-  External, Reveal, Close, ChevronLeft, ChevronRight, ChevronDown, Frame, Refresh, Import, Copy, Dots, Layers, Check, PanelLeft, PanelRight, Expand, Collapse
+  External, Reveal, Close, ChevronLeft, ChevronRight, ChevronDown, ChevronUp, Frame, Refresh, Import, Copy, Dots, Layers, Check, PanelLeft, PanelRight, Expand, Collapse
 };
 void drawIcon(ImDrawList* dl, Icon icon, ImVec2 center, float size, ImU32 color);
 
@@ -56,6 +56,9 @@ bool button(const char* label, bool primary = false, float width = 0.0f, Icon ic
 // Grey capitals over a section; `right` — an icon button at its end (returns
 // true when clicked).
 bool sectionHeader(const char* label, Icon right = Icon::Plus, bool withButton = false, const char* tip = nullptr);
+// The same with a chevron: a click on the row folds / unfolds `open`.
+bool foldHeader(const char* label, bool& open, Icon right = Icon::Plus, bool withButton = false,
+                const char* tip = nullptr);
 // Text cut with "…" to fit `width`.
 void textClipped(ImDrawList* dl, ImFont* font, float size, ImVec2 pos, ImU32 color, const char* text, float width);
 // Monospace text in the current window.

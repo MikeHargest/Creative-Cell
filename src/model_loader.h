@@ -4,6 +4,7 @@
 
 #include <cstdint>
 #include <filesystem>
+#include <functional>
 #include <string>
 #include <vector>
 
@@ -27,13 +28,20 @@ struct Model {
   size_t vertexCount() const;
 };
 
+// Asked now and then while a file loads (from the loading thread): true
+// gives up — the load fails with kCancelled. FBX and OBJ listen; the others
+// are quick.
+using CancelFn = std::function<bool()>;
+extern const char* const kCancelled;
+
 // Reads an OBJ, STL, FBX, glTF or GLB file. False with a message when it
-// can't be read or holds no triangles.
-bool loadModel(const std::string& utf8Path, Model& out, std::string& error);
+// can't be read or holds no triangles. An FBX is read from the disk as it
+// is parsed (never whole in memory).
+bool loadModel(const std::string& utf8Path, Model& out, std::string& error, const CancelFn& cancel = {});
 // The same from bytes already read; `lowerExt` with the dot (".fbx").
 // `sourcePath` lets a .gltf find its .bin files (empty: embedded only).
 bool loadModelFromMemory(const std::string& data, const std::string& lowerExt, Model& out, std::string& error,
-                         const std::filesystem::path& sourcePath = {});
+                         const std::filesystem::path& sourcePath = {}, const CancelFn& cancel = {});
 
 // The extensions loadModel reads, lower case with the dot.
 bool isModelExtension(const std::string& lowerExt);

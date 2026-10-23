@@ -2,6 +2,7 @@
 
 #include <algorithm>
 #include <cfloat>
+#include <charconv>
 #include <cmath>
 #include <cstdlib>
 #include <cstring>
@@ -36,8 +37,33 @@ std::string lowerExt(const std::filesystem::path& p) {
 
 bool isSpace(char c) { return c == ' ' || c == '\t' || c == '\r'; }
 
+// The number at `q` (spaces skipped), `q` moved past it; 0 when there is
+// none (the word is skipped). from_chars: several times strtof's speed, and
+// no locale.
+float parseFloat(const char*& q, const char* end) {
+  while (q < end && (isSpace(*q) || *q == '\n')) ++q;
+  if (q < end && *q == '+') ++q;
+  float v = 0.0f;
+  const std::from_chars_result r = std::from_chars(q, end, v);
+  if (r.ec == std::errc::invalid_argument) {
+    while (q < end && !isSpace(*q) && *q != '\n') ++q;
+    return 0.0f;
+  }
+  q = r.ptr;
+  return r.ec == std::errc() ? v : 0.0f;  // (out of range: a denormal, near enough 0)
+}
+
+long parseLong(const char*& q, const char* end, bool& ok) {
+  if (q < end && *q == '+') ++q;
+  long v = 0;
+  const std::from_chars_result r = std::from_chars(q, end, v);
+  ok = r.ec == std::errc();
+  if (r.ptr != q) q = r.ptr;
+  return v;
+}
+
 // --- OBJ: one mesh per "o" / "g"; normals kept when every face has them ---
-void loadObj(const std::string& s, Model& out) {
+bool loadObj(const std::string& s, Model& out, const CancelFn& cancel) {
   std::vector<glm::vec3> pos, nrm;
   std::unordered_map<std::string, int> materials;
   std::vector<long> face, faceN;
@@ -57,20 +83,22 @@ void loadObj(const std::string& s, Model& out) {
   };
   const char* p = s.c_str();
   const char* end = p + s.size();
+  uint32_t lines = 0;
   while (p < end) {
+    if ((++lines & 0xFFFF) == 0 && cancel && cancel()) return false;
     const char* lineEnd = static_cast<const char*>(std::memchr(p, '\n', end - p));
     if (!lineEnd) lineEnd = end;
     while (p < lineEnd && isSpace(*p)) ++p;
     const ptrdiff_t len = lineEnd - p;
     if (len > 2 && p[0] == 'v' && isSpace(p[1])) {
-      char* q = const_cast<char*>(p + 2);
+      const char* q = p + 2;
       float v[3];
-      for (float& x : v) x = std::strtof(q, &q);
+      for (float& x : v) x = parseFloat(q, lineEnd);
       pos.emplace_back(v[0], v[1], v[2]);
     } else if (len > 3 && p[0] == 'v' && p[1] == 'n' && isSpace(p[2])) {
-      char* q = const_cast<char*>(p + 3);
+      const char* q = p + 3;
       float v[3];
-      for (float& x : v) x = std::strtof(q, &q);
+      for (float& x : v) x = parseFloat(q, lineEnd);
       nrm.emplace_back(v[0], v[1], v[2]);
     } else if (len > 2 && (p[0] == 'o' || p[0] == 'g') && isSpace(p[1])) {
       const char* q = p + 2;
@@ -90,20 +118,18 @@ void loadObj(const std::string& s, Model& out) {
       while (q < lineEnd) {
         while (q < lineEnd && isSpace(*q)) ++q;
         if (q >= lineEnd) break;
-        char* e;
-        const long idx = std::strtol(q, &e, 10);
-        if (e == q) break;
+        bool ok = false;
+        const long idx = parseLong(q, lineEnd, ok);
+        if (!ok) break;
         face.push_back(idx < 0 ? static_cast<long>(pos.size()) + idx : idx - 1);
         long n = -1;
-        q = e;
         if (q < lineEnd && *q == '/') {
           ++q;
-          if (q < lineEnd && *q != '/') std::strtol(q, &e, 10), q = e;  // texture coordinate: not needed
+          if (q < lineEnd && *q != '/') parseLong(q, lineEnd, ok);  // texture coordinate: not needed
           if (q < lineEnd && *q == '/') {
             ++q;
-            const long ni = std::strtol(q, &e, 10);
-            if (e != q) n = ni < 0 ? static_cast<long>(nrm.size()) + ni : ni - 1;
-            q = e;
+            const long ni = parseLong(q, lineEnd, ok);
+            if (ok) n = ni < 0 ? static_cast<long>(nrm.size()) + ni : ni - 1;
           }
         }
         faceN.push_back(n);
@@ -149,6 +175,7 @@ void loadObj(const std::string& s, Model& out) {
     }
     out.meshes.push_back(std::move(m));
   }
+  return true;
 }
 
 // --- STL: one mesh, positions welded where they are equal ---
@@ -171,10 +198,11 @@ void loadStl(const std::string& s, Model& out) {
   } else {
     // ASCII: every "vertex x y z", three to a facet.
     const char* p = s.c_str();
+    const char* end = p + s.size();
     while ((p = std::strstr(p, "vertex")) != nullptr) {
-      char* q = const_cast<char*>(p + 6);
+      const char* q = p + 6;
       float v[3];
-      for (float& x : v) x = std::strtof(q, &q);
+      for (float& x : v) x = parseFloat(q, end);
       corners.emplace_back(v[0], v[1], v[2]);
       p = q;
     }
@@ -198,17 +226,38 @@ void loadStl(const std::string& s, Model& out) {
   if (!m.indices.empty()) out.meshes.push_back(std::move(m));
 }
 
-// --- FBX through ufbx: every mesh where its node puts it, meters, Y up ---
-bool loadFbx(const std::string& s, Model& out, std::string& error) {
+// --- FBX through ufbx: every mesh where its node puts it, meters, Y up.
+// Animation and embedded files (textures packed in) are skipped: a viewer
+// doesn't need them, and they can be most of the file. (ufbx keeps its
+// numbers as floats: UFBX_REAL_IS_FLOAT, half the memory of doubles.) ---
+ufbx_progress_result fbxProgress(void* user, const ufbx_progress*) {
+  const CancelFn& cancel = *static_cast<const CancelFn*>(user);
+  return cancel() ? UFBX_PROGRESS_CANCEL : UFBX_PROGRESS_CONTINUE;
+}
+
+ufbx_load_opts fbxOptions(const CancelFn& cancel) {
   ufbx_load_opts opts = {};
   opts.target_axes = ufbx_axes_right_handed_y_up;
   opts.target_unit_meters = 1.0f;
   opts.space_conversion = UFBX_SPACE_CONVERSION_MODIFY_GEOMETRY;
   opts.generate_missing_normals = true;
-  ufbx_error err;
-  ufbx_scene* scene = ufbx_load_memory(s.data(), s.size(), &opts, &err);
+  opts.ignore_animation = true;
+  opts.ignore_embedded = true;
+  opts.read_buffer_size = 4u << 20;  // (the default 16 KB reads a big file slowly)
+  if (cancel) {
+    opts.progress_cb.fn = fbxProgress;
+    opts.progress_cb.user = const_cast<CancelFn*>(&cancel);
+    opts.progress_interval_hint = 8u << 20;
+  }
+  return opts;
+}
+
+// The scene's meshes into `out`; the scene freed.
+bool fbxScene(ufbx_scene* scene, const ufbx_error& err, Model& out, std::string& error) {
   if (!scene) {
-    error = std::string("Couldn't read the FBX: ") + std::string(err.description.data, err.description.length);
+    error = err.type == UFBX_ERROR_CANCELLED
+                ? kCancelled
+                : std::string("Couldn't read the FBX: ") + std::string(err.description.data, err.description.length);
     return false;
   }
   out.materials = static_cast<int>(scene->materials.count);
@@ -251,6 +300,18 @@ bool loadFbx(const std::string& s, Model& out, std::string& error) {
   }
   ufbx_free_scene(scene);
   return true;
+}
+
+bool loadFbx(const std::string& s, Model& out, std::string& error, const CancelFn& cancel) {
+  const ufbx_load_opts opts = fbxOptions(cancel);
+  ufbx_error err;
+  return fbxScene(ufbx_load_memory(s.data(), s.size(), &opts, &err), err, out, error);
+}
+
+bool loadFbxFile(const std::string& utf8Path, Model& out, std::string& error, const CancelFn& cancel) {
+  const ufbx_load_opts opts = fbxOptions(cancel);
+  ufbx_error err;
+  return fbxScene(ufbx_load_file_len(utf8Path.data(), utf8Path.size(), &opts, &err), err, out, error);
 }
 
 // --- glTF / GLB through cgltf: files opened with wide paths (non-ASCII
@@ -415,32 +476,9 @@ bool isModelExtension(const std::string& e) {
   return e == ".obj" || e == ".fbx" || e == ".gltf" || e == ".glb" || e == ".stl";
 }
 
-bool loadModel(const std::string& utf8Path, Model& out, std::string& error) {
-  out = Model();
-  const std::filesystem::path path = std::filesystem::u8path(utf8Path);
-  std::string data;
-  if (!readFile(path, data)) {
-    error = "Couldn't read the file.";
-    return false;
-  }
-  return loadModelFromMemory(data, lowerExt(path), out, error, path);
-}
-
-bool loadModelFromMemory(const std::string& data, const std::string& ext, Model& out, std::string& error,
-                         const std::filesystem::path& sourcePath) {
-  out = Model();
-  if (ext == ".gltf" || ext == ".glb") {
-    if (!loadGltf(data, sourcePath, out, error)) return false;
-  } else if (ext == ".obj") {
-    loadObj(data, out);
-  } else if (ext == ".stl") {
-    loadStl(data, out);
-  } else if (ext == ".fbx") {
-    if (!loadFbx(data, out, error)) return false;
-  } else {
-    error = "Unsupported format.";
-    return false;
-  }
+namespace {
+// What every loader's result must pass.
+bool checkModel(Model& out, std::string& error) {
   for (const SubMesh& m : out.meshes) {
     for (const glm::vec3& p : m.positions) {
       if (!std::isfinite(p.x) || !std::isfinite(p.y) || !std::isfinite(p.z)) {
@@ -454,6 +492,48 @@ bool loadModelFromMemory(const std::string& data, const std::string& ext, Model&
     return false;
   }
   return true;
+}
+}  // namespace
+
+const char* const kCancelled = "Cancelled.";
+
+bool loadModel(const std::string& utf8Path, Model& out, std::string& error, const CancelFn& cancel) {
+  out = Model();
+  const std::filesystem::path path = std::filesystem::u8path(utf8Path);
+  if (lowerExt(path) == ".fbx") {
+    if (!std::filesystem::exists(path)) {
+      error = "Couldn't read the file.";
+      return false;
+    }
+    return loadFbxFile(utf8Path, out, error, cancel) && checkModel(out, error);
+  }
+  std::string data;
+  if (!readFile(path, data)) {
+    error = "Couldn't read the file.";
+    return false;
+  }
+  return loadModelFromMemory(data, lowerExt(path), out, error, path, cancel);
+}
+
+bool loadModelFromMemory(const std::string& data, const std::string& ext, Model& out, std::string& error,
+                         const std::filesystem::path& sourcePath, const CancelFn& cancel) {
+  out = Model();
+  if (ext == ".gltf" || ext == ".glb") {
+    if (!loadGltf(data, sourcePath, out, error)) return false;
+  } else if (ext == ".obj") {
+    if (!loadObj(data, out, cancel)) {
+      error = kCancelled;
+      return false;
+    }
+  } else if (ext == ".stl") {
+    loadStl(data, out);
+  } else if (ext == ".fbx") {
+    if (!loadFbx(data, out, error, cancel)) return false;
+  } else {
+    error = "Unsupported format.";
+    return false;
+  }
+  return checkModel(out, error);
 }
 
 RenderMesh buildRenderMesh(const Model& model, float smoothAngleDeg) {

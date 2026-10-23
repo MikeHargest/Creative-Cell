@@ -19,6 +19,10 @@ class Jobs {
 
   void run(std::function<void()> job, bool urgent = false);
   void post(std::function<void()> onMain);
+  // Called (on the posting thread) after each post(): wakes the main loop.
+  std::function<void()> onPost;
+  // Results waiting for drainMain().
+  bool hasPosted();
   // Runs what the jobs posted, for up to `budgetMs` (the rest next frame).
   void drainMain(double budgetMs);
 

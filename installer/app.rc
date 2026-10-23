@@ -1,12 +1,13 @@
 // Windows resources: the icon (GLFW picks "GLFW_ICON" up for the window and
 // taskbar; Explorer shows it for the exe) and the file's version info.
+// app.ico is made from app_icon.png.
 #include <winver.h>
 
 GLFW_ICON ICON "app.ico"
 
 VS_VERSION_INFO VERSIONINFO
-FILEVERSION 0,1,1,0
-PRODUCTVERSION 0,1,1,0
+FILEVERSION 0,2,0,0
+PRODUCTVERSION 0,2,0,0
 FILEFLAGSMASK 0x3fL
 FILEFLAGS 0x0L
 FILEOS VOS_NT_WINDOWS32
@@ -17,13 +18,14 @@ BEGIN
   BEGIN
     BLOCK "040904b0"
     BEGIN
-      VALUE "CompanyName", "CRC"
+      VALUE "CompanyName", "Mike Hargest"
+      VALUE "LegalCopyright", "Copyright (c) 2026 Mike Hargest. All rights reserved."
       VALUE "FileDescription", "Creative Cell"
-      VALUE "FileVersion", "0.1.1"
+      VALUE "FileVersion", "0.2.0"
       VALUE "InternalName", "CreativeCell"
       VALUE "OriginalFilename", "CreativeCell.exe"
       VALUE "ProductName", "Creative Cell"
-      VALUE "ProductVersion", "0.1.1"
+      VALUE "ProductVersion", "0.2.0"
     END
   END
   BLOCK "VarFileInfo"

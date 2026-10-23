@@ -33,8 +33,16 @@ void Jobs::run(std::function<void()> job, bool urgent) {
 }
 
 void Jobs::post(std::function<void()> onMain) {
+  {
+    std::lock_guard<std::mutex> lock(mainMutex_);
+    main_.push_back(std::move(onMain));
+  }
+  if (onPost) onPost();
+}
+
+bool Jobs::hasPosted() {
   std::lock_guard<std::mutex> lock(mainMutex_);
-  main_.push_back(std::move(onMain));
+  return !main_.empty();
 }
 
 void Jobs::drainMain(double budgetMs) {

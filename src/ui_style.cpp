@@ -33,8 +33,8 @@ float s() { return g_scale; }
 void setScale(float scale) { g_scale = scale > 0.5f ? scale : 1.0f; }
 
 float textSize() { return px(14.0f); }
-float smallSize() { return px(12.0f); }
-float monoSize() { return px(12.5f); }
+float smallSize() { return px(12.5f); }
+float monoSize() { return px(13.0f); }
 
 void loadFonts() {
   ImGuiIO& io = ImGui::GetIO();
@@ -246,6 +246,10 @@ void drawIcon(ImDrawList* dl, Icon icon, ImVec2 c, float size, ImU32 color) {
       L(-0.55f, -0.25f, 0, 0.3f);
       L(0, 0.3f, 0.55f, -0.25f);
       break;
+    case Icon::ChevronUp:
+      L(-0.55f, 0.25f, 0, -0.3f);
+      L(0, -0.3f, 0.55f, 0.25f);
+      break;
     case Icon::Frame:
       for (int sx : {-1, 1}) {
         for (int sy : {-1, 1}) {
@@ -392,7 +396,7 @@ bool sectionHeader(const char* label, Icon right, bool withButton, const char* t
   const float w = ImGui::GetContentRegionAvail().x;
   const float h = px(26);
   ImGui::Dummy(ImVec2(w - (withButton ? px(22) : 0.0f), h));
-  const float fs = px(11);
+  const float fs = px(11.5f);
   dl->AddText(fonts.sans, fs, ImVec2(pos.x + px(4), pos.y + (h - fs) * 0.5f), col::text3, label);
   bool clicked = false;
   if (withButton) {
@@ -404,6 +408,31 @@ bool sectionHeader(const char* label, Icon right, bool withButton, const char* t
     ImGui::SetCursorScreenPos(ImVec2(pos.x, pos.y + h));
     ImGui::Dummy(ImVec2(0, 0));
   }
+  return clicked;
+}
+
+bool foldHeader(const char* label, bool& open, Icon right, bool withButton, const char* tip) {
+  ImDrawList* dl = ImGui::GetWindowDrawList();
+  const ImVec2 pos = ImGui::GetCursorScreenPos();
+  const float w = ImGui::GetContentRegionAvail().x;
+  const float h = px(26);
+  ImGui::PushID(label);
+  if (ImGui::InvisibleButton("##fold", ImVec2(w - (withButton ? px(24) : 0.0f), h))) open = !open;
+  const bool hov = ImGui::IsItemHovered();
+  if (hov) dl->AddRectFilled(pos, ImVec2(pos.x + w, pos.y + h), col::bg2, px(5));
+  const ImU32 fg = hov ? col::text2 : col::text3;
+  drawIcon(dl, open ? Icon::ChevronDown : Icon::ChevronRight, ImVec2(pos.x + px(9), pos.y + h * 0.5f), px(10), fg);
+  const float fs = px(11.5f);
+  dl->AddText(fonts.sans, fs, ImVec2(pos.x + px(20), pos.y + (h - fs) * 0.5f), fg, label);
+  bool clicked = false;
+  if (withButton) {
+    ImGui::SameLine(0, 0);
+    ImGui::SetCursorScreenPos(ImVec2(pos.x + w - px(22), pos.y + (h - px(22)) * 0.5f));
+    clicked = iconButton("##hdr", right, px(22), false, tip);
+    ImGui::SetCursorScreenPos(ImVec2(pos.x, pos.y + h));
+    ImGui::Dummy(ImVec2(0, 0));
+  }
+  ImGui::PopID();
   return clicked;
 }
 

@@ -3,7 +3,7 @@
 Менеджер и просмотрщик 3D-ассетов: библиотека моделей с превью, быстрый
 поиск и фильтры, 3D-инспектор. Одна нативная программа под Windows
 (C++17, OpenGL, Dear ImGui, SQLite) — без сервера и браузера. Вьювер, камера
-и навигационный кубик — из Expanse (`../voxel-sculpt`).
+и навигационный кубик — общие с Expanse, другим проектом автора.
 
 ## Сборка
 
@@ -13,8 +13,8 @@
 ```
 
 Нужен Visual Studio 2022 (C++). CMake лежит в `.tools/` (не в git; любой
-CMake 3.20+ подойдёт). GLFW, GLM и ImGui подтягиваются при первой
-конфигурации; SQLite, ufbx, cgltf, stb и шрифты — в `third_party/` и
+CMake 3.20+ подойдёт). GLFW, GLM, Dear ImGui и FreeType подтягиваются при
+первой конфигурации; SQLite, ufbx, cgltf, stb и шрифты — в `third_party/` и
 `assets/`.
 
 Запуск: `build/bin/Release/CreativeCell.exe`.
@@ -47,4 +47,10 @@ powershell -ExecutionPolicy Bypass -File installer\build_installer.ps1
   в папку библиотеки — опция импорта.
 - **Ассеты** — FBX, OBJ, glTF, GLB, STL. Загрузка, подсчёт и превью — в
   фоне на нескольких потоках; сначала то, что на экране.
-- Документация — [docs/wiki/](docs/wiki/home.md).
+
+## Лицензия
+
+Все права защищены. Код открыт для чтения, но использовать, собирать,
+копировать, изменять и распространять его без письменного разрешения автора
+нельзя — см. [LICENSE](LICENSE). Сторонние библиотеки и шрифты — под своими
+лицензиями: [THIRD_PARTY_LICENSES.txt](THIRD_PARTY_LICENSES.txt).

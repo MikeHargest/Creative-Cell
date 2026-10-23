@@ -244,17 +244,29 @@ void App::drawBrowserToolbar(float width) {
       ImGui::EndPopup();
     }
   }
-  // Formats.
+  // Format.
   {
-    rx -= px(4);
-    const char* labels[] = {"STL", "GLTF", "OBJ", "FBX", "ALL"};
-    const char* keys[] = {"stl", "gltf", "obj", "fbx", ""};
+    const char* labels[] = {"All formats", "FBX", "OBJ", "glTF / GLB", "STL"};
+    const char* keys[] = {"", "fbx", "obj", "gltf", "stl"};
+    const char* current = labels[0];
     for (int i = 0; i < 5; ++i) {
-      const float w = fonts.sans->CalcTextSizeA(smallSize(), FLT_MAX, 0, labels[i]).x + px(16);
-      place(w);
-      rx += px(6);
-      if (chip(labels[i], format_ == keys[i], chipH)) format_ = keys[i];
-      if (i == 1 && ImGui::IsItemHovered()) tooltip("glTF and GLB");
+      if (format_ == keys[i]) current = labels[i];
+    }
+    const std::string label = std::string(current) + "     ";  // room for the chevron
+    const float w = fonts.sans->CalcTextSizeA(smallSize(), FLT_MAX, 0, label.c_str()).x + px(16);
+    place(w);
+    if (chip((label + "##format").c_str(), ImGui::IsPopupOpen("##formatMenu") || !format_.empty(), chipH)) {
+      ImGui::OpenPopup("##formatMenu");
+    }
+    drawIcon(dl, Icon::ChevronDown, ImVec2(ImGui::GetItemRectMax().x - px(13), cy), px(9), col::text3);
+    if (ImGui::IsItemHovered()) tooltip("Format");
+    ImGui::SetNextWindowPos(ImVec2(rx + px(8) + w, cy + chipH * 0.5f + px(4)), ImGuiCond_Always, ImVec2(1, 0));
+    if (ImGui::BeginPopup("##formatMenu")) {
+      for (int i = 0; i < 5; ++i) {
+        if (i == 1) ImGui::Separator();
+        if (ImGui::MenuItem(labels[i], nullptr, format_ == keys[i])) format_ = keys[i];
+      }
+      ImGui::EndPopup();
     }
   }
   // Search.
@@ -292,12 +304,12 @@ void App::drawBrowserToolbar(float width) {
   const float ts = px(15);
   const float titleRoom = rx - titleX - px(8);
   const std::string count = formatCount(static_cast<int64_t>(visible_.size()));
-  const float countW = fonts.mono->CalcTextSizeA(px(11.5f), FLT_MAX, 0, count.c_str()).x;
+  const float countW = fonts.mono->CalcTextSizeA(px(12.5f), FLT_MAX, 0, count.c_str()).x;
   textClipped(dl, fonts.sans, ts, ImVec2(titleX, cy - ts * 0.55f), col::text, title.c_str(),
               std::max(0.0f, titleRoom - countW - px(10)));
   const float tw = std::min(fonts.sans->CalcTextSizeA(ts, FLT_MAX, 0, title.c_str()).x, std::max(0.0f, titleRoom - countW - px(10)));
   if (titleRoom > countW + px(30)) {
-    dl->AddText(fonts.mono, px(11.5f), ImVec2(titleX + tw + px(10), cy - px(6)), col::text3, count.c_str());
+    dl->AddText(fonts.mono, px(12.5f), ImVec2(titleX + tw + px(10), cy - px(6)), col::text3, count.c_str());
   }
 }
 
@@ -310,7 +322,7 @@ void App::drawGrid() {
   const int cols = std::max(1, static_cast<int>((avail + gap) / (want + gap)));
   gridColumns_ = cols;
   const float tileW = std::floor((avail - gap * (cols - 1)) / cols);
-  const float infoH = px(50);
+  const float infoH = px(52);
   const float tileH = tileW + infoH;
   const int rows = (static_cast<int>(visible_.size()) + cols - 1) / cols;
   const ImVec2 origin = ImGui::GetCursorScreenPos();
@@ -371,8 +383,8 @@ void App::drawGrid() {
         } else if (!a->error.empty()) {
           drawIcon(dl, Icon::Warning, tc, px(22), col::text3);
           const char* msg = "Couldn't read";
-          const ImVec2 ms = fonts.sans->CalcTextSizeA(px(11), FLT_MAX, 0, msg);
-          dl->AddText(fonts.sans, px(11), ImVec2(tc.x - ms.x * 0.5f, tc.y + px(18)), col::text3, msg);
+          const ImVec2 ms = fonts.sans->CalcTextSizeA(px(12), FLT_MAX, 0, msg);
+          dl->AddText(fonts.sans, px(12), ImVec2(tc.x - ms.x * 0.5f, tc.y + px(18)), col::text3, msg);
         } else {
           // Waiting for its thumbnail: a quiet pulse.
           const int alpha = a->needsAnalysis() ? 70 + static_cast<int>(50 * std::sin(now * 3.0 + index * 0.4)) : 90;
@@ -381,7 +393,7 @@ void App::drawGrid() {
         // Format badge.
         {
           const std::string fmt = upper(a->ext);
-          const float fs = px(9.5f);
+          const float fs = px(10.5f);
           const ImVec2 bs = fonts.mono->CalcTextSizeA(fs, FLT_MAX, 0, fmt.c_str());
           const ImVec2 b0(t0.x + px(6), t0.y + px(6));
           dl->AddRectFilled(b0, ImVec2(b0.x + bs.x + px(10), b0.y + bs.y + px(6)), IM_COL32(10, 10, 10, 200), px(4));
@@ -389,7 +401,7 @@ void App::drawGrid() {
         }
         if (a->missing) {
           const char* m = "MISSING";
-          const float fs = px(9.5f);
+          const float fs = px(10.5f);
           const ImVec2 bs = fonts.mono->CalcTextSizeA(fs, FLT_MAX, 0, m);
           const ImVec2 b0(t1.x - bs.x - px(16), t0.y + px(6));
           dl->AddRectFilled(b0, ImVec2(t1.x - px(6), b0.y + bs.y + px(6)), IM_COL32(230, 230, 230, 230), px(4));
@@ -401,7 +413,7 @@ void App::drawGrid() {
                     a->name.c_str(), tileW - pad * 2);
         std::string meta = a->triangles >= 0 ? shortCount(a->triangles) + " tris" : std::string("...");
         const std::string sizeText = formatBytes(a->size);
-        const float ms = px(11);
+        const float ms = px(12);
         dl->AddText(fonts.mono, ms, ImVec2(p.x + pad + px(2), nameY + px(20)), col::text3, meta.c_str());
         const float sw = fonts.mono->CalcTextSizeA(ms, FLT_MAX, 0, sizeText.c_str()).x;
         const float mw = fonts.mono->CalcTextSizeA(ms, FLT_MAX, 0, meta.c_str()).x;
@@ -446,7 +458,7 @@ void App::drawList() {
   for (int c = 0; c < 6; ++c) {
     ImGui::TableSetColumnIndex(c);
     ImGui::PushStyleColor(ImGuiCol_Text, ImGui::ColorConvertU32ToFloat4(col::text3));
-    ImGui::PushFont(nullptr, px(11));
+    ImGui::PushFont(nullptr, px(12));
     ImGui::TableHeader(ImGui::TableGetColumnName(c));
     ImGui::PopFont();
     ImGui::PopStyleColor();
@@ -529,7 +541,7 @@ void App::drawList() {
       auto monoCell = [&](int column, const std::string& text, ImU32 color = col::text2) {
         ImGui::TableSetColumnIndex(column);
         const ImVec2 cp = ImGui::GetCursorScreenPos();
-        textClipped(dl, fonts.mono, px(11.5f), ImVec2(cp.x, rp.y + (rowH - px(8) - px(11.5f)) * 0.5f), color,
+        textClipped(dl, fonts.mono, px(12.5f), ImVec2(cp.x, rp.y + (rowH - px(8) - px(12.5f)) * 0.5f), color,
                     text.c_str(), ImGui::GetContentRegionAvail().x);
       };
       monoCell(1, upper(a->ext));
@@ -583,7 +595,7 @@ void App::drawEmptyState(bool libraryEmpty) {
       std::vector<std::string> files = openModelFilesDialog(window_);
       if (!files.empty()) importPaths(files);
     }
-    centered(fonts.mono, px(11), c.y + px(156), col::text3, "FBX  OBJ  GLTF  GLB  STL");
+    centered(fonts.mono, px(12), c.y + px(156), col::text3, "FBX  OBJ  GLTF  GLB  STL");
     return;
   }
   const ImVec2 c(p0.x + avail.x * 0.5f, p0.y + avail.y * 0.4f);

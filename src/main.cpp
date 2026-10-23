@@ -25,6 +25,9 @@
 namespace {
 App* g_app = nullptr;
 GLFWwindow* g_window = nullptr;
+// The last input (or anything else that may change the picture): frames go
+// on for a moment after it — hover fades, tooltips that wait to appear.
+double g_lastInput = 0.0;
 
 // --- one window: a second launch (Explorer's Open on another file) hands
 // its files to the running one, which opens them in tabs ---
@@ -84,11 +87,25 @@ HWND createIpcWindow() {
 
 void onDrop(GLFWwindow*, int count, const char** paths) {
   if (!g_app) return;
+  g_lastInput = glfwGetTime();
   std::vector<std::string> list(paths, paths + count);  // GLFW gives UTF-8
   g_app->onDrop(list);
 }
 
 bool g_inFrame = false;
+
+void touched() { g_lastInput = glfwGetTime(); }
+
+// Set before ImGui's backend, which chains to them.
+void watchInput(GLFWwindow* window) {
+  glfwSetCursorPosCallback(window, [](GLFWwindow*, double, double) { touched(); });
+  glfwSetMouseButtonCallback(window, [](GLFWwindow*, int, int, int) { touched(); });
+  glfwSetScrollCallback(window, [](GLFWwindow*, double, double) { touched(); });
+  glfwSetKeyCallback(window, [](GLFWwindow*, int, int, int, int) { touched(); });
+  glfwSetCharCallback(window, [](GLFWwindow*, unsigned int) { touched(); });
+  glfwSetWindowFocusCallback(window, [](GLFWwindow*, int) { touched(); });
+  glfwSetCursorEnterCallback(window, [](GLFWwindow*, int) { touched(); });
+}
 
 // One frame: the app's UI, drawn into the back buffer. Its size, for the
 // screenshot.
@@ -117,7 +134,10 @@ void onRefresh(GLFWwindow* window) {
   glfwSwapBuffers(window);
 }
 
-void onFramebufferSize(GLFWwindow* window, int, int) { onRefresh(window); }
+void onFramebufferSize(GLFWwindow* window, int, int) {
+  g_lastInput = glfwGetTime();
+  onRefresh(window);
+}
 
 void onScale(GLFWwindow*, float xs, float) {
   ui::setScale(xs);
@@ -211,6 +231,7 @@ int main() {
   // (No keyboard navigation: the arrows move the selection in the grid.)
   ui::loadFonts();
   ui::applyStyle();
+  watchInput(window);
   ImGui_ImplGlfw_InitForOpenGL(window, true);
   ImGui_ImplOpenGL3_Init("#version 330 core");
 
@@ -229,13 +250,16 @@ int main() {
 
   int frame = 0;
   while (!glfwWindowShouldClose(window) && !app.wantsQuit()) {
-    // Idle: wake on input or a few times a second (background work posts
-    // its results; the pulses on waiting tiles keep moving).
+    // Frames only while something moves or just after input; otherwise
+    // asleep until an event (background work wakes it with its results),
+    // with a slow tick for timed things (saving the layout).
     if (glfwGetWindowAttrib(window, GLFW_ICONIFIED)) {
-      glfwWaitEventsTimeout(0.2);
+      glfwWaitEventsTimeout(0.5);
       continue;
     }
-    glfwWaitEventsTimeout(1.0 / 30.0);
+    const double interval = app.frameInterval();
+    const bool fresh = glfwGetTime() - g_lastInput < 1.0 || frame < 10 || !opts.shotPath.empty();
+    glfwWaitEventsTimeout(interval > 0.0 ? interval : fresh ? 1.0 / 30.0 : 1.0);
     int w, h;
     drawFrame(window, w, h);
     ++frame;

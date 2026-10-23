@@ -5,6 +5,7 @@
 
 #include <GLFW/glfw3.h>
 #include <glm/gtc/matrix_transform.hpp>
+#include <glm/gtc/type_ptr.hpp>
 
 #include <algorithm>
 #include <cmath>
@@ -19,11 +20,11 @@ namespace {
 void statCard(const char* label, const std::string& value, float width) {
   ImDrawList* dl = ImGui::GetWindowDrawList();
   const ImVec2 p = ImGui::GetCursorScreenPos();
-  const float h = px(50);
+  const float h = px(52);
   ImGui::Dummy(ImVec2(width, h));
   dl->AddRectFilled(p, ImVec2(p.x + width, p.y + h), col::bg2, px(6));
-  dl->AddText(fonts.sans, px(10.5f), ImVec2(p.x + px(10), p.y + px(9)), col::text3, label);
-  textClipped(dl, fonts.mono, px(13), ImVec2(p.x + px(10), p.y + px(26)), col::text, value.c_str(), width - px(20));
+  dl->AddText(fonts.sans, px(11.5f), ImVec2(p.x + px(10), p.y + px(8)), col::text3, label);
+  textClipped(dl, fonts.mono, px(14), ImVec2(p.x + px(10), p.y + px(26)), col::text, value.c_str(), width - px(20));
 }
 
 void dimText(const char* text) {
@@ -38,8 +39,29 @@ void App::drawInspector(ImVec2 pos, ImVec2 size) {
   ImDrawList* dl = ImGui::GetWindowDrawList();
   dl->AddLine(pos, ImVec2(pos.x, pos.y + size.y), col::line);
   const float minViewer = px(180), minInfo = px(160);
-  const float viewerH = std::clamp(size.y * viewerFrac_, minViewer, std::max(minViewer, size.y - minInfo));
+  const float viewerH =
+      infoHidden_ ? size.y : std::clamp(size.y * viewerFrac_, minViewer, std::max(minViewer, size.y - minInfo));
   drawViewer(ImVec2(pos.x + 1, pos.y), ImVec2(size.x - 1, viewerH));
+  // Fold / unfold the info: bottom middle of the view.
+  {
+    const ImVec2 bs(px(40), px(20));
+    const ImVec2 b0(pos.x + (size.x - bs.x) * 0.5f, pos.y + viewerH - bs.y - px(8));
+    dl->AddRectFilled(b0, ImVec2(b0.x + bs.x, b0.y + bs.y), IM_COL32(16, 16, 16, 220), px(6));
+    ImGui::SetCursorScreenPos(b0);
+    if (ImGui::InvisibleButton("##infoToggle", bs)) {
+      infoHidden_ = !infoHidden_;
+      uiStateDirtyAt_ = ImGui::GetTime();
+    }
+    const bool hov = ImGui::IsItemHovered();
+    if (hov) dl->AddRectFilled(b0, ImVec2(b0.x + bs.x, b0.y + bs.y), col::bg3, px(6));
+    drawIcon(dl, infoHidden_ ? Icon::ChevronUp : Icon::ChevronDown, ImVec2(b0.x + bs.x * 0.5f, b0.y + bs.y * 0.5f),
+             px(11), hov ? col::text : col::text2);
+    if (hov) tooltip(infoHidden_ ? "Show the details" : "Hide the details");
+  }
+  if (infoHidden_) {
+    endPanel();
+    return;
+  }
 
   // Info below, scrolling.
   ImGui::SetCursorScreenPos(ImVec2(pos.x + 1, pos.y + viewerH));
@@ -107,7 +129,20 @@ void App::drawViewer(ImVec2 pos, ImVec2 size) {
   const float fbScale = io.DisplayFramebufferScale.x > 0.0f ? io.DisplayFramebufferScale.x : 1.0f;
   const int w = std::max(1, static_cast<int>(size.x * fbScale)), h = std::max(1, static_cast<int>(size.y * fbScale));
   v.aspect = static_cast<float>(w) / h;
-  if (v.target.resize(w, h, 8)) {
+  // Drawn again only when something it shows changed: a still view of a
+  // heavy model costs nothing.
+  const glm::mat4 viewM = v.camera.viewMatrix();
+  std::vector<float> sig(glm::value_ptr(viewM), glm::value_ptr(viewM) + 16);
+  for (float f : {static_cast<float>(w), static_cast<float>(h), static_cast<float>(v.shading), v.grid ? 1.0f : 0.0f,
+                  v.ao ? 1.0f : 0.0f, static_cast<float>(v.hoverPart), static_cast<float>(v.soloPart), v.floorY,
+                  v.gridStep, static_cast<float>(v.mesh.serial)}) {
+    sig.push_back(f);
+  }
+  const bool fresh = sig == v.drawnSig && v.target.texture() && v.target.width() == w && v.target.height() == h;
+  if (fresh) {
+    dl->AddImage(static_cast<ImTextureID>(v.target.texture()), pos, end, ImVec2(0, 1), ImVec2(1, 0));
+  } else if (v.target.resize(w, h, 8)) {
+    v.drawnSig = std::move(sig);
     const glm::vec3 eye = v.camera.position();
     const float dist = glm::length(eye - v.camera.target());
     const float r = v.mesh.valid() ? std::max(v.mesh.radius(), 1e-4f) : 1.0f;
@@ -117,12 +152,14 @@ void App::drawViewer(ImVec2 pos, ImVec2 size) {
     const float farZ = dist + r * 40.0f + v.gridStep * 400.0f;
     p.proj = glm::perspective(glm::radians(35.0f), static_cast<float>(w) / h, nearZ, farZ);
     p.shading = v.shading;
+    p.ao = v.ao;
     p.grid = v.grid && v.mesh.valid();
     p.floorY = v.floorY;
     p.gridStep = v.gridStep;
     p.highlightPart = v.hoverPart;
     p.soloPart = v.soloPart;
-    p.background = glm::vec3(0.043f);
+    // Render: a lighter floor, so the shadow on it reads.
+    p.background = glm::vec3(v.shading == Shading::Render ? 0.15f : 0.043f);
     v.target.bind();
     renderer_.draw(v.mesh, p);
     v.target.resolve();
@@ -154,17 +191,20 @@ void App::drawViewer(ImVec2 pos, ImVec2 size) {
 
   if (!v.mesh.valid()) return;
 
-  // Overlays: shading (top left), view tools (bottom left), cube (top right).
+  // Overlays: shading and the outliner (top left), the cube with the view tools
+  // under it (top right).
   const float chipH = px(24);
   ImGui::SetCursorScreenPos(ImVec2(pos.x + px(10), pos.y + px(10)));
   {
     const ImVec2 b0 = ImGui::GetCursorScreenPos();
-    const char* names[] = {"SOLID", "EDGES", "WIRE", "POINTS"};
-    float total = 0.0f;
+    const char* names[] = {"SOLID", "EDGES", "WIRE", "POINTS", "RENDER"};
+    // AO: a switch for the solid views (Render always has it).
+    const bool aoChip = v.shading == Shading::Solid || v.shading == Shading::SolidWire;
+    float total = aoChip ? fonts.sans->CalcTextSizeA(smallSize(), FLT_MAX, 0, "AO").x + px(16) + px(9) : 0.0f;
     for (const char* n : names) total += fonts.sans->CalcTextSizeA(smallSize(), FLT_MAX, 0, n).x + px(16);
     dl->AddRectFilled(ImVec2(b0.x - px(3), b0.y - px(3)), ImVec2(b0.x + total + px(3), b0.y + chipH + px(3)),
                       IM_COL32(16, 16, 16, 220), px(7));
-    for (int i = 0; i < 4; ++i) {
+    for (int i = 0; i < 5; ++i) {
       if (i) ImGui::SameLine(0, 0);
       if (chip(names[i], static_cast<int>(v.shading) == i, chipH)) {
         v.shading = static_cast<Shading>(i);
@@ -172,28 +212,100 @@ void App::drawViewer(ImVec2 pos, ImVec2 size) {
       }
       if (ImGui::IsItemHovered()) {
         const char* tips[] = {"Solid  (1)", "Solid with edges  (2)", "Wireframe, hidden lines removed  (3)",
-                              "Vertices  (4)"};
+                              "Vertices  (4)", "Render: sun, shadows, ambient occlusion  (5)"};
         tooltip(tips[i]);
       }
     }
+    if (aoChip) {
+      ImGui::SameLine(0, 0);
+      const ImVec2 sp = ImGui::GetCursorScreenPos();
+      dl->AddLine(ImVec2(sp.x + px(4), sp.y + px(6)), ImVec2(sp.x + px(4), sp.y + chipH - px(6)), col::line);
+      ImGui::SetCursorScreenPos(ImVec2(sp.x + px(9), sp.y));
+      if (chip("AO", v.ao, chipH)) {
+        v.ao = !v.ao;
+        uiStateDirtyAt_ = ImGui::GetTime();
+      }
+      if (ImGui::IsItemHovered()) tooltip("Ambient occlusion: creases and contacts darker");
+    }
+  }
+  // Outliner: the model's meshes, under the shading; hover lights one up, a
+  // click shows only it.
+  v.hoverPart = -1;
+  const float outlinerTop = pos.y + px(10) + chipH + px(10);
+  const float outlinerBottom = end.y - px(12);
+  if (v.mesh.parts.size() > 1 && outlinerBottom - outlinerTop > px(40)) {
+    const float headH = px(28), rowH = px(24);
+    const bool open = !(infoFolded_ & 8);
+    const float listH = open ? std::min(rowH * v.mesh.parts.size() + px(4), outlinerBottom - outlinerTop - headH - px(8))
+                             : 0.0f;
+    ImGui::SetCursorScreenPos(ImVec2(pos.x + px(7), outlinerTop));
+    ImGui::PushStyleColor(ImGuiCol_ChildBg, IM_COL32(16, 16, 16, 220));
+    ImGui::PushStyleVar(ImGuiStyleVar_ChildRounding, px(7));
+    ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding, ImVec2(px(3), px(3)));
+    ImGui::PushStyleVar(ImGuiStyleVar_ItemSpacing, ImVec2(0, 0));
+    ImGui::BeginChild("##outliner", ImVec2(std::min(px(240), size.x * 0.45f), headH + listH + px(6)),
+                      ImGuiChildFlags_AlwaysUseWindowPadding, ImGuiWindowFlags_NoScrollbar | ImGuiWindowFlags_NoScrollWithMouse);
+    char header[64];
+    std::snprintf(header, sizeof header, "MESHES  %zu", v.mesh.parts.size());
+    bool nowOpen = open;
+    foldHeader(header, nowOpen);
+    if (nowOpen != open) {
+      infoFolded_ ^= 8;
+      uiStateDirtyAt_ = ImGui::GetTime();
+    }
+    if (open) {
+      ImGui::PushStyleColor(ImGuiCol_ChildBg, IM_COL32(0, 0, 0, 0));
+      ImGui::BeginChild("##outlinerList", ImVec2(0, listH), 0);
+      ImDrawList* odl = ImGui::GetWindowDrawList();
+      const float w = ImGui::GetContentRegionAvail().x;
+      for (size_t i = 0; i < v.mesh.parts.size(); ++i) {
+        const RenderMesh::Part& part = v.mesh.parts[i];
+        ImGui::PushID(static_cast<int>(i));
+        const ImVec2 p = ImGui::GetCursorScreenPos();
+        const bool solo = v.soloPart == static_cast<int>(i);
+        ImGui::InvisibleButton("##part", ImVec2(w, rowH));
+        const bool hov = ImGui::IsItemHovered();
+        if (hov) v.hoverPart = static_cast<int>(i);
+        if (ImGui::IsItemClicked()) v.soloPart = solo ? -1 : static_cast<int>(i);
+        if (hov) tooltip(solo ? "Click: show all" : "Click: show only this one");
+        if (solo || hov) odl->AddRectFilled(p, ImVec2(p.x + w, p.y + rowH), solo ? col::bg4 : col::bg3, px(5));
+        drawIcon(odl, Icon::Layers, ImVec2(p.x + px(13), p.y + rowH * 0.5f), px(12), solo ? col::text : col::text3);
+        const std::string tris = formatCount(part.indexCount / 3);
+        const float tw = fonts.mono->CalcTextSizeA(px(12), FLT_MAX, 0, tris.c_str()).x;
+        textClipped(odl, fonts.sans, px(13), ImVec2(p.x + px(26), p.y + (rowH - px(13)) * 0.5f),
+                    solo || hov ? col::text : col::text2, part.name.empty() ? "(unnamed)" : part.name.c_str(),
+                    w - px(40) - tw);
+        odl->AddText(fonts.mono, px(12), ImVec2(p.x + w - tw - px(8), p.y + (rowH - px(12)) * 0.5f), col::text3,
+                     tris.c_str());
+        ImGui::PopID();
+      }
+      ImGui::EndChild();
+      ImGui::PopStyleColor();
+    }
+    ImGui::EndChild();
+    ImGui::PopStyleVar(3);
+    ImGui::PopStyleColor();
   }
   {
+    // A column centred under the cube.
     const float b = px(28);
-    ImGui::SetCursorScreenPos(ImVec2(pos.x + px(10), end.y - b - px(10)));
-    const ImVec2 b0 = ImGui::GetCursorScreenPos();
-    dl->AddRectFilled(ImVec2(b0.x - px(3), b0.y - px(3)), ImVec2(b0.x + (viewerOnly_ ? 3 : 4) * b + px(3), b0.y + b + px(3)),
+    const ImVec2 b0(end.x - px(8) - px(84) * 0.5f - b * 0.5f, pos.y + px(8) + px(84) + px(6));
+    dl->AddRectFilled(ImVec2(b0.x - px(3), b0.y - px(3)), ImVec2(b0.x + b + px(3), b0.y + (viewerOnly_ ? 3 : 4) * b + px(3)),
                       IM_COL32(16, 16, 16, 220), px(7));
+    int slot = 0;
+    auto next = [&]() { ImGui::SetCursorScreenPos(ImVec2(b0.x, b0.y + b * slot++)); };
+    next();
     if (iconButton("##frame", Icon::Frame, b, false, "Frame the model  (F, double-click)")) {
       frameViewer();
     }
-    ImGui::SameLine(0, 0);
+    next();
     if (iconButton("##gridToggle", Icon::Grid, b, v.grid, "Floor grid  (G)")) {
       v.grid = !v.grid;
       uiStateDirtyAt_ = ImGui::GetTime();
     }
-    ImGui::SameLine(0, 0);
+    next();
     if (iconButton("##turn", Icon::Refresh, b, v.turntable, "Turntable")) v.turntable = !v.turntable;
-    if (!viewerOnly_) ImGui::SameLine(0, 0);
+    if (!viewerOnly_) next();
     if (!viewerOnly_ && iconButton("##maximize", viewerMax_ ? Icon::Collapse : Icon::Expand, b, viewerMax_,
                    viewerMax_ ? "Back  (Esc, F11)" : "Full window  (F11)")) {
       viewerMax_ = !viewerMax_;
@@ -206,7 +318,7 @@ void App::drawViewer(ImVec2 pos, ImVec2 size) {
     const bool metric = a ? a->metric : viewer_.statsValid && viewer_.stats.metric;
     std::snprintf(buf, sizeof buf, "%s tris   grid %s", formatCount(static_cast<int64_t>(v.mesh.indexCount / 3)).c_str(),
                   formatLength(v.gridStep, metric).c_str());
-    const float fs = px(10.5f);
+    const float fs = px(12);
     const ImVec2 ts = fonts.mono->CalcTextSizeA(fs, FLT_MAX, 0, buf);
     dl->AddText(fonts.mono, fs, ImVec2(end.x - ts.x - px(12), end.y - ts.y - px(12)), col::text3, buf);
   }
@@ -217,6 +329,17 @@ void App::drawViewer(ImVec2 pos, ImVec2 size) {
 void App::drawAssetInfo(const Asset& a) {
   ImDrawList* dl = ImGui::GetWindowDrawList();
   const float w = ImGui::GetContentRegionAvail().x;
+  // A section's header; returns whether it's unfolded (`button`: its + was clicked).
+  auto section = [&](const char* label, int bit, bool* button = nullptr, const char* tip = nullptr) {
+    bool open = !(infoFolded_ & bit);
+    const bool clicked = foldHeader(label, open, Icon::Plus, button != nullptr, tip);
+    if (button) *button = clicked;
+    if (open != !(infoFolded_ & bit)) {
+      infoFolded_ ^= bit;
+      uiStateDirtyAt_ = ImGui::GetTime();
+    }
+    return open;
+  };
 
   // Name and kind.
   ImGui::PushFont(nullptr, px(16));
@@ -234,7 +357,7 @@ void App::drawAssetInfo(const Asset& a) {
     const ImVec2 p = ImGui::GetCursorScreenPos();
     ImGui::InvisibleButton("##path", ImVec2(w, px(18)));
     const bool hov = ImGui::IsItemHovered();
-    textClipped(dl, fonts.mono, px(11), ImVec2(p.x, p.y + px(2)), hov ? col::text2 : col::text3, a.path.c_str(), w);
+    textClipped(dl, fonts.mono, px(12), ImVec2(p.x, p.y + px(2)), hov ? col::text2 : col::text3, a.path.c_str(), w);
     if (hov) tooltip((a.path + "\n\nClick to copy").c_str());
     if (ImGui::IsItemClicked()) {
       ImGui::SetClipboardText(a.path.c_str());
@@ -273,61 +396,66 @@ void App::drawAssetInfo(const Asset& a) {
     dl->AddRect(p, ImVec2(p.x + w, p.y + px(62)), col::bg4, px(6));
     drawIcon(dl, Icon::Warning, ImVec2(p.x + px(18), p.y + px(20)), px(14), col::text2);
     dl->AddText(fonts.sans, textSize(), ImVec2(p.x + px(34), p.y + px(12)), col::text, "File missing");
-    dl->AddText(fonts.sans, px(12), ImVec2(p.x + px(34), p.y + px(34)), col::text3, "Moved or deleted outside the app");
+    dl->AddText(fonts.sans, px(13), ImVec2(p.x + px(34), p.y + px(33)), col::text3, "Moved or deleted outside the app");
     ImGui::Dummy(ImVec2(w, px(70)));
   } else if (!a.error.empty()) {
     const ImVec2 p = ImGui::GetCursorScreenPos();
     dl->AddRect(p, ImVec2(p.x + w, p.y + px(62)), col::bg4, px(6));
     drawIcon(dl, Icon::Warning, ImVec2(p.x + px(18), p.y + px(20)), px(14), col::text2);
     dl->AddText(fonts.sans, textSize(), ImVec2(p.x + px(34), p.y + px(12)), col::text, "Couldn't read this file");
-    textClipped(dl, fonts.sans, px(12), ImVec2(p.x + px(34), p.y + px(34)), col::text3, a.error.c_str(), w - px(44));
+    textClipped(dl, fonts.sans, px(13), ImVec2(p.x + px(34), p.y + px(33)), col::text3, a.error.c_str(), w - px(44));
     ImGui::Dummy(ImVec2(w, px(70)));
   }
 
   // Numbers.
-  sectionHeader("GEOMETRY");
-  const float cw = (w - px(8)) * 0.5f;
-  auto count = [](int64_t n) { return n >= 0 ? formatCount(n) : std::string("—"); };
-  statCard("TRIANGLES", count(a.triangles), cw);
-  ImGui::SameLine(0, px(8));
-  statCard("VERTICES", count(a.vertices), cw);
-  statCard("MESHES", count(a.parts), cw);
-  ImGui::SameLine(0, px(8));
-  statCard("MATERIALS", count(a.materials), cw);
-  if (a.triangles >= 0) {
-    const std::string dims = formatLength(a.dims.x, a.metric) + "  \xC3\x97  " + formatLength(a.dims.y, a.metric) +
-                             "  \xC3\x97  " + formatLength(a.dims.z, a.metric);
-    statCard(a.metric ? "SIZE  (X \xC3\x97 Y \xC3\x97 Z)" : "SIZE  (X \xC3\x97 Y \xC3\x97 Z, FILE UNITS)", dims, w);
+  if (section("GEOMETRY", 1)) {
+    const float cw = (w - px(8)) * 0.5f;
+    auto count = [](int64_t n) { return n >= 0 ? formatCount(n) : std::string("—"); };
+    statCard("TRIANGLES", count(a.triangles), cw);
+    ImGui::SameLine(0, px(8));
+    statCard("VERTICES", count(a.vertices), cw);
+    statCard("MESHES", count(a.parts), cw);
+    ImGui::SameLine(0, px(8));
+    statCard("MATERIALS", count(a.materials), cw);
+    if (a.triangles >= 0) {
+      const std::string dims = formatLength(a.dims.x, a.metric) + "  \xC3\x97  " + formatLength(a.dims.y, a.metric) +
+                               "  \xC3\x97  " + formatLength(a.dims.z, a.metric);
+      statCard(a.metric ? "SIZE  (X \xC3\x97 Y \xC3\x97 Z)" : "SIZE  (X \xC3\x97 Y \xC3\x97 Z, FILE UNITS)", dims, w);
+    }
   }
 
   ImGui::Dummy(ImVec2(0, px(6)));
-  sectionHeader("FILE");
-  auto row = [&](const char* label, const std::string& value) {
-    const ImVec2 p = ImGui::GetCursorScreenPos();
-    ImGui::Dummy(ImVec2(w, px(22)));
-    dl->AddText(fonts.sans, px(12), ImVec2(p.x + px(4), p.y + px(4)), col::text3, label);
-    const float vw = fonts.mono->CalcTextSizeA(px(11.5f), FLT_MAX, 0, value.c_str()).x;
-    const float room = w - px(100);
-    textClipped(dl, fonts.mono, px(11.5f), ImVec2(p.x + w - std::min(vw, room) - px(4), p.y + px(4)), col::text2,
-                value.c_str(), room);
-  };
-  row("Size on disk", formatBytes(a.size));
-  row("Added", formatDate(a.added));
-  row("Modified", formatDate(a.mtime));
-  if (const WatchedFolder* f = lib_.folder(a.folderId)) {
-    const size_t s = f->path.find_last_of('\\');
-    row("Watched folder", s == std::string::npos ? f->path : f->path.substr(s + 1));
+  if (section("FILE", 2)) {
+    auto row = [&](const char* label, const std::string& value) {
+      const ImVec2 p = ImGui::GetCursorScreenPos();
+      ImGui::Dummy(ImVec2(w, px(24)));
+      dl->AddText(fonts.sans, px(13), ImVec2(p.x + px(4), p.y + px(4)), col::text3, label);
+      const float vw = fonts.mono->CalcTextSizeA(px(12.5f), FLT_MAX, 0, value.c_str()).x;
+      const float room = w - px(100);
+      textClipped(dl, fonts.mono, px(12.5f), ImVec2(p.x + w - std::min(vw, room) - px(4), p.y + px(4)), col::text2,
+                  value.c_str(), room);
+    };
+    row("Size on disk", formatBytes(a.size));
+    row("Added", formatDate(a.added));
+    row("Modified", formatDate(a.mtime));
+    if (const WatchedFolder* f = lib_.folder(a.folderId)) {
+      const size_t s = f->path.find_last_of('\\');
+      row("Watched folder", s == std::string::npos ? f->path : f->path.substr(s + 1));
+    }
   }
 
   // Collections.
   ImGui::Dummy(ImVec2(0, px(6)));
-  if (sectionHeader("COLLECTIONS", Icon::Plus, true, "Add to a collection")) ImGui::OpenPopup("##addToCol");
+  bool addToCol = false;
+  const bool colsOpen = section("COLLECTIONS", 4, &addToCol, "Add to a collection");
+  if (addToCol) ImGui::OpenPopup("##addToCol");
   if (ImGui::BeginPopup("##addToCol")) {
     collectionMenuItems({a.id});
     ImGui::EndPopup();
   }
   const std::vector<int64_t> cols = lib_.collectionsOf(a.id);
-  if (cols.empty()) {
+  if (!colsOpen) {
+  } else if (cols.empty()) {
     dimText("  In no collection");
   } else {
     float x = 0.0f;
@@ -360,36 +488,6 @@ void App::drawAssetInfo(const Asset& a) {
     }
   }
 
-  // The model's meshes (from the viewer's load).
-  if (viewer_.assetId == a.id && viewer_.mesh.valid() && viewer_.mesh.parts.size() > 1) {
-    ImGui::Dummy(ImVec2(0, px(8)));
-    char header[64];
-    std::snprintf(header, sizeof header, "MESHES  %zu", viewer_.mesh.parts.size());
-    sectionHeader(header);
-    int hover = -1;
-    for (size_t i = 0; i < viewer_.mesh.parts.size(); ++i) {
-      const RenderMesh::Part& part = viewer_.mesh.parts[i];
-      ImGui::PushID(static_cast<int>(i));
-      const ImVec2 p = ImGui::GetCursorScreenPos();
-      const bool solo = viewer_.soloPart == static_cast<int>(i);
-      ImGui::InvisibleButton("##part", ImVec2(w, px(26)));
-      const bool hov = ImGui::IsItemHovered();
-      if (hov) hover = static_cast<int>(i);
-      if (ImGui::IsItemClicked()) viewer_.soloPart = solo ? -1 : static_cast<int>(i);
-      if (hov) tooltip(solo ? "Click: show all" : "Click: show only this one");
-      if (solo || hov) dl->AddRectFilled(p, ImVec2(p.x + w, p.y + px(26)), solo ? col::bg4 : col::bg3, px(5));
-      drawIcon(dl, Icon::Layers, ImVec2(p.x + px(14), p.y + px(13)), px(12), solo ? col::text : col::text3);
-      const std::string tris = formatCount(part.indexCount / 3);
-      const float tw = fonts.mono->CalcTextSizeA(px(11), FLT_MAX, 0, tris.c_str()).x;
-      textClipped(dl, fonts.sans, px(12.5f), ImVec2(p.x + px(28), p.y + px(6)), solo || hov ? col::text : col::text2,
-                  part.name.empty() ? "(unnamed)" : part.name.c_str(), w - px(40) - tw);
-      dl->AddText(fonts.mono, px(11), ImVec2(p.x + w - tw - px(8), p.y + px(7)), col::text3, tris.c_str());
-      ImGui::PopID();
-    }
-    viewer_.hoverPart = hover;
-  } else {
-    viewer_.hoverPart = -1;
-  }
   ImGui::Dummy(ImVec2(0, px(10)));
 }
 

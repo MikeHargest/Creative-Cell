@@ -44,6 +44,7 @@ class Camera {
   // it off levels the view again.
   void setFreeOrbit(bool free);
   bool freeOrbit() const { return free_; }
+  bool animating() const { return animating_; }
 
  private:
   glm::quat turntable() const;  // yaw / pitch as a rotation

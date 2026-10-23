@@ -1,7 +1,7 @@
 cmake_minimum_required(VERSION 3.20)
 # The build's version, shown in the status bar; keep installer/app.rc and
 # installer/creative_cell.nsi in step.
-project(creative_cell VERSION 0.1.1 LANGUAGES C CXX RC)
+project(creative_cell VERSION 0.2.0 LANGUAGES C CXX RC)
 
 # Static MSVC runtime: the installed app runs on a clean Windows without the
 # VC++ redistributable. Set before the dependencies so they match.
@@ -42,6 +42,19 @@ FetchContent_Declare(
 )
 FetchContent_MakeAvailable(imgui)
 
+# --- FreeType: ImGui draws its text with it (hinted: crisp small sizes;
+# stb_truetype's are blurry) ---
+foreach(dep ZLIB BZIP2 PNG HARFBUZZ BROTLI)
+  set(FT_DISABLE_${dep} ON CACHE BOOL "" FORCE)
+endforeach()
+FetchContent_Declare(
+  freetype
+  GIT_REPOSITORY https://github.com/freetype/freetype.git
+  GIT_TAG VER-2-13-3
+  GIT_SHALLOW TRUE
+)
+FetchContent_MakeAvailable(freetype)
+
 if(MSVC)
   add_compile_options(/utf-8 /MP)
   add_compile_definitions(_CRT_SECURE_NO_WARNINGS NOMINMAX WIN32_LEAN_AND_MEAN)
@@ -61,6 +74,8 @@ add_library(cc_core STATIC
 )
 target_include_directories(cc_core PUBLIC src third_party)
 target_link_libraries(cc_core PUBLIC glm::glm shell32 ole32)
+# ufbx keeps its numbers as floats, not doubles: half the memory on big FBX files.
+target_compile_definitions(cc_core PUBLIC UFBX_REAL_IS_FLOAT)
 target_compile_definitions(cc_core PRIVATE SQLITE_DQS=0 SQLITE_OMIT_LOAD_EXTENSION SQLITE_DEFAULT_WAL_SYNCHRONOUS=1)
 if(MSVC)
   set_source_files_properties(third_party/sqlite/sqlite3.c third_party/ufbx/ufbx.c PROPERTIES COMPILE_OPTIONS "/W0")
@@ -90,14 +105,16 @@ add_executable(creative_cell
   ${imgui_SOURCE_DIR}/imgui_draw.cpp
   ${imgui_SOURCE_DIR}/imgui_tables.cpp
   ${imgui_SOURCE_DIR}/imgui_widgets.cpp
+  ${imgui_SOURCE_DIR}/misc/freetype/imgui_freetype.cpp
   ${imgui_SOURCE_DIR}/backends/imgui_impl_glfw.cpp
   ${imgui_SOURCE_DIR}/backends/imgui_impl_opengl3.cpp
 )
 target_include_directories(creative_cell PRIVATE ${imgui_SOURCE_DIR} ${imgui_SOURCE_DIR}/backends)
-target_link_libraries(creative_cell PRIVATE cc_core glfw opengl32 dwmapi comdlg32 uuid)
+target_link_libraries(creative_cell PRIVATE cc_core glfw freetype opengl32 dwmapi comdlg32 uuid)
 target_compile_definitions(creative_cell PRIVATE
   CC_VERSION="${PROJECT_VERSION}"
   CC_ASSETS_DIR="${CMAKE_SOURCE_DIR}/assets"
+  IMGUI_ENABLE_FREETYPE
   IMGUI_DISABLE_OBSOLETE_FUNCTIONS)
 # The shipped program: CreativeCell.exe, a windowed app (no console).
 set_target_properties(creative_cell PROPERTIES OUTPUT_NAME "CreativeCell" WIN32_EXECUTABLE ON)

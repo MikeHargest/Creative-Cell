@@ -1,0 +1,27 @@
+Copyright (c) 2026 Mike Hargest. All rights reserved.
+
+Creative Cell — the source code, assets and documentation in this repository,
+except the third-party parts listed in THIRD_PARTY_LICENSES.txt — is
+proprietary. It is published so that it can be read; no license to use it is
+granted.
+
+Without the prior written permission of the copyright holder you may not:
+
+  - use, run, build or install the software or any part of it, except to read
+    the source code on the website that hosts this repository;
+  - copy, modify, translate or create derivative works of it;
+  - distribute, publish, sublicense, sell, rent or lend it or any part of it,
+    in source or binary form;
+  - use it, in whole or in part, to train or improve software or models.
+
+Viewing this repository through its host's website, and forking it there
+as far as the host's terms of service require, are allowed; nothing else is.
+
+The third-party software and fonts in this repository (see
+THIRD_PARTY_LICENSES.txt) remain under their own licenses.
+
+THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+IMPLIED. IN NO EVENT SHALL THE COPYRIGHT HOLDER BE LIABLE FOR ANY CLAIM,
+DAMAGES OR OTHER LIABILITY ARISING FROM OR IN CONNECTION WITH THE SOFTWARE.
+
+For permission to use the software, contact the copyright holder.
