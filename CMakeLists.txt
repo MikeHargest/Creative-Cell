@@ -1,3 +1,11 @@
+# Creative Cell — build (Windows, Visual Studio 2022 with C++, CMake 3.20+):
+#   cmake -B build -S . -G "Visual Studio 17 2022" -A x64
+#   cmake --build build --config Release
+# The app: build/bin/Release/CreativeCell.exe. GLFW, GLM, Dear ImGui and
+# FreeType are fetched on the first configure; SQLite, ufbx, cgltf, stb and
+# the fonts are in third_party/ and assets/.
+# Self-test of the core, no window: ctest --test-dir build -C Release
+# (or build/bin/Release/cc_selftest.exe). Installer: installer/build_installer.ps1.
 cmake_minimum_required(VERSION 3.20)
 # The build's version, shown in the status bar; keep installer/app.rc and
 # installer/creative_cell.nsi in step.

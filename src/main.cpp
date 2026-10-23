@@ -155,6 +155,11 @@ void darkTitleBar(GLFWwindow* window) {
   DwmSetWindowAttribute(hwnd, 34 /* DWMWA_BORDER_COLOR */, &border, sizeof border);
 }
 
+// Command line: files open in tabs (viewed, not added to the library),
+// folders are imported. For checks: --data <dir> — a library of its own
+// instead of %LOCALAPPDATA%\CreativeCell; --shot <file.png> [--frames N] —
+// a picture of the window after N frames, then quit; --select N — the N-th
+// asset selected; --import <path> — imported at start.
 LaunchOptions parseArgs() {
   LaunchOptions o;
   int argc = 0;
